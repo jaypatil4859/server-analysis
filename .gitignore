@@ -2,6 +2,19 @@
 node_modules/
 **/node_modules/
 
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+ipython_log.py
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Package manager files to ignore if requested
+package-lock.json
+**/package-lock.json
+
 # Environment variables
 .env
 backend/.env
