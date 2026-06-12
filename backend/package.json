@@ -1,0 +1,24 @@
+{
+  "name": "server-analysis-backend",
+  "version": "1.0.0",
+  "description": "Backend for server analysis monitoring dashboard",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "db:seed": "node seed.js",
+    "db:dump": "node dump.js",
+    "db:restore": "node restore.js",
+    "db:inject": "node inject.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
