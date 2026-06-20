@@ -1,4 +1,28 @@
 import os from 'os';
+import { exec } from 'child_process';
+import util from 'util';
+const execPromise = util.promisify(exec);
+
+async function getDiskUsage() {
+  try {
+    const { stdout } = await execPromise("df -B1 / | tail -n 1");
+    const parts = stdout.trim().split(/\s+/);
+    if (parts.length >= 6) {
+      const totalBytes = parseInt(parts[1], 10);
+      const usedBytes = parseInt(parts[2], 10);
+      const usagePercent = parseFloat(((usedBytes / totalBytes) * 100).toFixed(1));
+      return { totalBytes, usedBytes, usagePercent };
+    }
+  } catch (err) {
+    console.error('Error getting disk usage:', err.message);
+  }
+  // Fallback default (100GB, 40% used)
+  return {
+    totalBytes: 100 * 1024 * 1024 * 1024,
+    usedBytes: 40 * 1024 * 1024 * 1024,
+    usagePercent: 40.0
+  };
+}
 
 // Configuration from environment variables
 const API_URL = process.env.METRICS_API_URL || 'http://localhost:5000/api/metrics';
@@ -43,6 +67,7 @@ function cpuAverage() {
 async function collectAndSend() {
   try {
     const cpuUsage = await getCpuUsage();
+    const diskUsage = await getDiskUsage();
     
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
@@ -60,11 +85,13 @@ async function collectAndSend() {
         usedBytes: usedMem,
         usagePercent: ramUsagePercent
       },
+      diskUsage,
       loadAverage: {
         oneMin: parseFloat(loadAvg[0].toFixed(2)),
         fiveMin: parseFloat(loadAvg[1].toFixed(2)),
         fifteenMin: parseFloat(loadAvg[2].toFixed(2))
       },
+      cpuCores: os.cpus().length,
       timestamp: new Date().toISOString()
     };
 

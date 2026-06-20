@@ -1,0 +1,9 @@
+# Root dockerignore
+node_modules
+**/node_modules
+frontend/dist
+backend/alerts.log
+.git
+*.zip
+.env
+**/alerts.log

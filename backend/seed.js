@@ -7,11 +7,7 @@ dotenv.config();
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/server_analysis';
 
-const SERVERS = [
-  { id: 'web-server-01', name: 'Web Server 01', baseCpu: 20, ramTotalGB: 16 },
-  { id: 'db-server-01', name: 'Database Server 01', baseCpu: 35, ramTotalGB: 32 },
-  { id: 'cache-server-01', name: 'Redis Cache 01', baseCpu: 10, ramTotalGB: 8 }
-];
+const SERVERS = [];
 
 async function seed() {
   try {

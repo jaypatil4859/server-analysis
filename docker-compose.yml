@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # MongoDB Database Service
+  database:
+    image: mongo:7.0
+    container_name: serverpulse-db
+    restart: unless-stopped
+    ports:
+      - "27017:27017" # Exposes DB for external check or direct access
+    environment:
+      - MONGO_INITDB_DATABASE=server_analysis
+    volumes:
+      - mongodb_data:/data/db
+
+  # Node Express Backend API Service
+  backend:
+    build:
+      context: ./backend
+    container_name: serverpulse-backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    depends_on:
+      - database
+    environment:
+      - PORT=5000
+      # Connects to database service hostname defined in this docker-compose
+      - MONGODB_URI=mongodb://database:27017/server_analysis
+      # Notification integrations (configured via .env in root if needed)
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - ALERT_EMAIL_RECIPIENT=${ALERT_EMAIL_RECIPIENT}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+
+  # Nginx Frontend Web Service
+  frontend:
+    build:
+      context: ./frontend
+    container_name: serverpulse-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80" # Exposed HTTP port on the host
+    depends_on:
+      - backend
+
+volumes:
+  mongodb_data:
+    driver: local

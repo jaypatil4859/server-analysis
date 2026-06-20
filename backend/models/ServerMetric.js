@@ -19,10 +19,19 @@ const ServerMetricSchema = new mongoose.Schema({
     usedBytes: { type: Number, required: true },
     usagePercent: { type: Number, required: true },
   },
+  diskUsage: {
+    totalBytes: { type: Number },
+    usedBytes: { type: Number },
+    usagePercent: { type: Number }
+  },
   loadAverage: {
     oneMin: { type: Number, required: true },
     fiveMin: { type: Number, required: true },
     fifteenMin: { type: Number, required: true },
+  },
+  cpuCores: {
+    type: Number,
+    default: 1
   },
   timestamp: {
     type: Date,

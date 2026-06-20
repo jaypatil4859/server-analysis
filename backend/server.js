@@ -25,16 +25,16 @@ app.use('/health', (req, res) => {
 });
 
 // Database Connection & Server Startup
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
 mongoose
-  .connect(MONGODB_URI)
+  .connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
   .then(() => {
     console.log('Successfully connected to MongoDB');
   })
   .catch((error) => {
-    console.warn('WARNING: MongoDB is not reachable. Launching server with In-Memory fallback database.');
-  })
-  .finally(() => {
-    app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
-    });
+    console.warn('WARNING: MongoDB is not reachable. Using In-Memory fallback database.');
   });
+
