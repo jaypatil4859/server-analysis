@@ -47,6 +47,30 @@ services:
     depends_on:
       - backend
 
+  # Centralized SSH Real-Time Collector
+  collector:
+    image: node:18-alpine
+    container_name: serverpulse-collector
+    restart: unless-stopped
+    working_dir: /usr/src/app
+    volumes:
+      - .:/usr/src/app
+      # Mount the SSH private key from the host into the container (change path as needed)
+      - ${SSH_KEY_PATH:-/home/devops/.ssh/id_rsa}:/root/.ssh/id_rsa:ro
+    depends_on:
+      - backend
+    environment:
+      - METRICS_API_URL=http://backend:5000/api/metrics
+      - POLL_INTERVAL_MS=10000 # Real-time poll interval (10 seconds)
+      - SSH_USER=${SSH_USER:-root}
+      - SSH_KEY_PATH=/root/.ssh/id_rsa_temp
+    command: >
+      sh -c "mkdir -p /root/.ssh && 
+             chmod 700 /root/.ssh && 
+             cp /root/.ssh/id_rsa /root/.ssh/id_rsa_temp && 
+             chmod 600 /root/.ssh/id_rsa_temp && 
+             node ssh-collector.js"
+
 volumes:
   mongodb_data:
     driver: local

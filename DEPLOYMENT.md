@@ -34,7 +34,9 @@ If server IP addresses or hostnames change in the future, edit the `SERVERS` arr
 
 ---
 
-## Step-by-Step Deployment Walkthrough
+## Deployment Method 1: Native VM Service Setup (PM2 + Nginx)
+
+Follow these steps to deploy directly on the host VM operating system:
 
 ### Step 1: Install Dependencies
 Run npm installation in the root directory and the sub-folders:
@@ -94,6 +96,37 @@ pm2 start ecosystem.config.cjs
 pm2 startup
 pm2 save
 ```
+
+---
+
+## Deployment Method 2: Containerized Setup (Docker Compose)
+
+Follow these steps to deploy using Docker Compose (which isolates all processes including MongoDB, the Backend, Frontend Nginx, and the SSH metrics collector):
+
+### Step 1: Set Host Environment Variables
+Ensure the following variables are exported in your environment or placed in a `.env` file in the root directory:
+```bash
+# Required for mounting your DevOps private key into the collector container
+export SSH_KEY_PATH="/home/devops/.ssh/id_rsa"
+export SSH_USER="root"
+```
+
+### Step 2: Build and Launch the Containers
+Navigate to the root directory containing `docker-compose.yml` and run:
+```bash
+# Build and run containers in daemon mode
+docker-compose up -d --build
+```
+This will automatically spin up:
+-   **`serverpulse-db`**: Persistent MongoDB database.
+-   **`serverpulse-backend`**: Node.js API listener on port `5000`.
+-   **`serverpulse-frontend`**: Serves React compiled app on port `80` (proxying `/api` to the backend).
+-   **`serverpulse-collector`**: Runs the SSH collector in the background, mounting your SSH key.
+
+### Step 3: Manage Containers
+-   To check container logs: `docker-compose logs -f`
+-   To restart services: `docker-compose restart`
+-   To shut down the cluster: `docker-compose down`
 
 ---
 
