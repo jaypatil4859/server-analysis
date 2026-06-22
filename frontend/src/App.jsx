@@ -4,7 +4,7 @@ import {
   TrendingUp, AlertCircle, Terminal, RefreshCw, AlertTriangle,
   Laptop, Battery, BatteryCharging, Wifi, Monitor, Flame,
   Zap, MousePointer, Keyboard, Percent, Compass, FileText, CheckCircle,
-  Bell, BellRing, Trash2, ShieldAlert, Check
+  Bell, BellRing, Trash2, ShieldAlert, Check, AlertOctagon, Calendar
 } from 'lucide-react';
 import { 
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, 
@@ -185,6 +185,19 @@ export default function App() {
   const [weeklyHistory, setWeeklyHistory] = useState([]);
   const [weeklyMetricTab, setWeeklyMetricTab] = useState('ram'); // 'ram' | 'cpu' | 'load'
   const [activeTab, setActiveTab] = useState('ram'); // 'ram' | 'load-peaks' | 'weekly'
+  const [combustionData, setCombustionData] = useState({
+    serverSummaries: [],
+    above80in24h: [],
+    above80in7d: [],
+    counts: {
+      current80Count: 0,
+      current90Count: 0,
+      peak24h80Count: 0,
+      peak24h90Count: 0,
+      peak7d80Count: 0,
+      peak7d90Count: 0
+    }
+  });
   
   // Alerting status
   const [alerts, setAlerts] = useState([]);
@@ -331,12 +344,13 @@ export default function App() {
       }
 
       // Fetch Server metrics & Alerts
-      const [serversRes, ramRes, peakRes, alertsRes, weeklyRes] = await Promise.all([
+      const [serversRes, ramRes, peakRes, alertsRes, weeklyRes, combustionRes] = await Promise.all([
         fetch(`${API_BASE}/current`),
         fetch(`${API_BASE}/ram-history-24h`),
         fetch(`${API_BASE}/peak-analysis`),
         fetch(`${API_BASE}/alerts`).catch(() => null),
-        fetch(`${API_BASE}/history-weekly`).catch(() => null)
+        fetch(`${API_BASE}/history-weekly`).catch(() => null),
+        fetch(`${API_BASE}/combustion-summary`).catch(() => null)
       ]);
 
       // Fetch Laptop current list
@@ -351,6 +365,7 @@ export default function App() {
       const peakData = await peakRes.json();
       const alertsData = alertsRes && alertsRes.ok ? await alertsRes.json() : [];
       const weeklyData = weeklyRes && weeklyRes.ok ? await weeklyRes.json() : [];
+      const combustionDataRes = combustionRes && combustionRes.ok ? await combustionRes.json() : null;
 
       let activeServerId = selectedServerId;
       if (serversData.length === 0) {
@@ -360,6 +375,19 @@ export default function App() {
         setWeeklyHistory([]);
         setAlerts([]);
         setIsMockData(false);
+        setCombustionData({
+          serverSummaries: [],
+          above80in24h: [],
+          above80in7d: [],
+          counts: {
+            current80Count: 0,
+            current90Count: 0,
+            peak24h80Count: 0,
+            peak24h90Count: 0,
+            peak7d80Count: 0,
+            peak7d90Count: 0
+          }
+        });
       } else {
         setServers(serversData);
         if (serversData.length > 0) {
@@ -381,6 +409,9 @@ export default function App() {
           setWeeklyHistory(processWeeklyHistory(weeklyData));
         } else {
           setWeeklyHistory([]);
+        }
+        if (combustionDataRes) {
+          setCombustionData(combustionDataRes);
         }
         setIsMockData(false);
       }
@@ -447,6 +478,19 @@ export default function App() {
       setIsMockData(false);
       setLaptops([]);
       setLaptopHistory([]);
+      setCombustionData({
+        serverSummaries: [],
+        above80in24h: [],
+        above80in7d: [],
+        counts: {
+          current80Count: 0,
+          current90Count: 0,
+          peak24h80Count: 0,
+          peak24h90Count: 0,
+          peak7d80Count: 0,
+          peak7d90Count: 0
+        }
+      });
     } finally {
       setLoading(false);
     }
@@ -1205,16 +1249,49 @@ export default function App() {
               </div>
 
               <div className="stat-item-list">
-                <div className="stat-item">
-                  <div className="stat-item-info">
-                    <div className="stat-item-icon">
-                      <Cpu size={14} />
+                <div className="stat-item" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div className="stat-item-info">
+                      <div className="stat-item-icon">
+                        <Cpu size={14} />
+                      </div>
+                      <span className="stat-item-name">Fleet Peak RAM Alert</span>
                     </div>
-                    <span className="stat-item-name">Peak Server RAM Alert</span>
+                    <span className="stat-item-val" style={{ color: 'var(--ram-color)' }}>
+                      {highestRamInfo.name}: {highestRamInfo.val}%
+                    </span>
                   </div>
-                  <span className="stat-item-val" style={{ color: 'var(--ram-color)' }}>
-                    {highestRamInfo.name}: {highestRamInfo.val}%
-                  </span>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: '1.4', paddingLeft: '26px' }}>
+                    Displays the absolute highest RAM utilization active across the fleet (currently highlighting {highestRamInfo.name}).
+                  </div>
+                  
+                  {/* Active Alerts Sub-list */}
+                  {servers.filter(s => s.cpuUsage >= 80 || s.ramUsage.usagePercent >= 80).length > 0 && (
+                    <div style={{ borderTop: '1px solid rgba(168, 132, 72, 0.08)', paddingTop: '8px', marginTop: '4px', paddingLeft: '26px' }}>
+                      <div style={{ fontSize: '9px', fontWeight: 'bold', color: 'var(--danger-color)', textTransform: 'uppercase', marginBottom: '6px', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <AlertTriangle size={10} /> Active Alerts (&gt;80%)
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {servers
+                          .filter(s => s.cpuUsage >= 80 || s.ramUsage.usagePercent >= 80)
+                          .map(s => {
+                            const isCpu80 = s.cpuUsage >= 80;
+                            const isRam80 = s.ramUsage.usagePercent >= 80;
+                            const parts = [];
+                            if (isCpu80) parts.push(`CPU: ${s.cpuUsage}%`);
+                            if (isRam80) parts.push(`RAM: ${s.ramUsage.usagePercent}%`);
+                            return (
+                              <div key={s.serverId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
+                                <span style={{ color: 'var(--text-secondary)' }}>{s.serverName}</span>
+                                <span style={{ color: Math.max(s.cpuUsage, s.ramUsage.usagePercent) >= 90 ? 'var(--danger-color)' : 'var(--luxury-gold)', fontWeight: '500' }}>
+                                  {parts.join(' / ')}
+                                </span>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="stat-item">
@@ -1272,6 +1349,101 @@ export default function App() {
                   node collector.js
                 </div>
               </details>
+            </div>
+          </section>
+
+          {/* Fleet Resource Combustion & High Usage Tracker */}
+          <section className="combustion-tracker-section" style={{ marginTop: '24px' }}>
+            <div className="glass-panel" style={{ padding: '24px', textAlign: 'left' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(168, 132, 72, 0.12)', paddingBottom: '16px', marginBottom: '20px', flexWrap: 'wrap', gap: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Zap size={18} style={{ color: 'var(--luxury-gold)' }} />
+                  <div>
+                    <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: '18px', fontWeight: '400', color: 'var(--text-primary)', margin: 0 }}>
+                      Fleet Resource Combustion & High Usage Tracker
+                    </h2>
+                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px', margin: 0 }}>
+                      Monitors CPU and RAM peaks across all servers to track heavy-load periods.
+                    </p>
+                  </div>
+                </div>
+                
+                {/* Threshold Summary Cards */}
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ border: '1px solid rgba(168, 132, 72, 0.15)', background: 'rgba(168, 132, 72, 0.03)', borderRadius: '6px', padding: '10px 16px', minWidth: '150px' }}>
+                    <div style={{ fontSize: '9px', textTransform: 'uppercase', color: 'var(--luxury-gold)', letterSpacing: '0.05em', fontWeight: 'bold' }}>Above 80% Utilization</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '6px' }}>
+                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Live: <strong>{combustionData.counts.current80Count}</strong></span>
+                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>24h: <strong>{combustionData.counts.peak24h80Count}</strong></span>
+                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>7d: <strong>{combustionData.counts.peak7d80Count}</strong></span>
+                    </div>
+                  </div>
+                  
+                  <div style={{ border: '1px solid rgba(184, 113, 88, 0.2)', background: 'rgba(184, 113, 88, 0.03)', borderRadius: '6px', padding: '10px 16px', minWidth: '150px' }}>
+                    <div style={{ fontSize: '9px', textTransform: 'uppercase', color: 'var(--danger-color)', letterSpacing: '0.05em', fontWeight: 'bold' }}>Above 90% Utilization</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '6px' }}>
+                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Live: <strong>{combustionData.counts.current90Count}</strong></span>
+                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>24h: <strong>{combustionData.counts.peak24h90Count}</strong></span>
+                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>7d: <strong>{combustionData.counts.peak7d90Count}</strong></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Parallel Peaks Lists */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px' }}>
+                {/* 24 Hour Peaks */}
+                <div>
+                  <h3 style={{ fontSize: '12px', fontWeight: '500', textTransform: 'uppercase', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px', borderBottom: '1px solid rgba(0,0,0,0.04)', paddingBottom: '8px', marginBottom: '12px' }}>
+                    <Clock size={13} style={{ color: 'var(--luxury-gold)' }} /> Exceeded 80% in Last 24 Hours
+                  </h3>
+                  {combustionData.above80in24h.length === 0 ? (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '16px 0' }}>No servers exceeded 80% in the last 24 hours.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {combustionData.above80in24h.map(item => (
+                        <div key={item.serverId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(0,0,0,0.005)', border: '1px solid rgba(0,0,0,0.015)', borderRadius: '4px' }}>
+                          <span style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-primary)' }}>{item.serverName}</span>
+                          <div style={{ display: 'flex', gap: '12px', fontSize: '11px' }}>
+                            <span style={{ color: item.maxCpu >= 80 ? 'var(--luxury-gold)' : 'var(--text-muted)' }}>
+                              CPU Peak: <strong>{item.maxCpu}%</strong>
+                            </span>
+                            <span style={{ color: item.maxRam >= 80 ? 'var(--ram-color)' : 'var(--text-muted)' }}>
+                              RAM Peak: <strong>{item.maxRam}%</strong>
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 7 Day Peaks */}
+                <div>
+                  <h3 style={{ fontSize: '12px', fontWeight: '500', textTransform: 'uppercase', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px', borderBottom: '1px solid rgba(0,0,0,0.04)', paddingBottom: '8px', marginBottom: '12px' }}>
+                    <Calendar size={13} style={{ color: 'var(--luxury-gold)' }} /> Exceeded 80% in Past 7 Days
+                  </h3>
+                  {combustionData.above80in7d.length === 0 ? (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '16px 0' }}>No servers exceeded 80% in the past 7 days.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {combustionData.above80in7d.map(item => (
+                        <div key={item.serverId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(0,0,0,0.005)', border: '1px solid rgba(0,0,0,0.015)', borderRadius: '4px' }}>
+                          <span style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-primary)' }}>{item.serverName}</span>
+                          <div style={{ display: 'flex', gap: '12px', fontSize: '11px' }}>
+                            <span style={{ color: item.maxCpu >= 80 ? 'var(--luxury-gold)' : 'var(--text-muted)' }}>
+                              CPU Peak: <strong>{item.maxCpu}%</strong>
+                            </span>
+                            <span style={{ color: item.maxRam >= 80 ? 'var(--ram-color)' : 'var(--text-muted)' }}>
+                              RAM Peak: <strong>{item.maxRam}%</strong>
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </section>
         </main>

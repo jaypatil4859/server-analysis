@@ -671,6 +671,210 @@ router.get('/history-weekly', async (req, res) => {
   }
 });
 
+// 3.8. Get combustion summary for all servers (counts, 24h peaks, 7d peaks above 80%)
+router.get('/combustion-summary', async (req, res) => {
+  try {
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const computeSummaryPayload = (serverSummaries) => {
+      let current80Count = 0;
+      let current90Count = 0;
+      let peak24h80Count = 0;
+      let peak24h90Count = 0;
+      let peak7d80Count = 0;
+      let peak7d90Count = 0;
+
+      const above80in24h = [];
+      const above80in7d = [];
+
+      serverSummaries.forEach(s => {
+        // Current
+        const maxCurrent = Math.max(s.currentCpu, s.currentRam);
+        if (maxCurrent >= 90) current90Count++;
+        if (maxCurrent >= 80) current80Count++;
+
+        // 24h
+        const max24h = Math.max(s.maxCpu24h, s.maxRam24h);
+        if (max24h >= 90) peak24h90Count++;
+        if (max24h >= 80) {
+          peak24h80Count++;
+          above80in24h.push({
+            serverId: s.serverId,
+            serverName: s.serverName,
+            maxCpu: s.maxCpu24h,
+            maxRam: s.maxRam24h,
+            peakValue: max24h
+          });
+        }
+
+        // 7d
+        const max7d = Math.max(s.maxCpu7d, s.maxRam7d);
+        if (max7d >= 90) peak7d90Count++;
+        if (max7d >= 80) {
+          peak7d80Count++;
+          above80in7d.push({
+            serverId: s.serverId,
+            serverName: s.serverName,
+            maxCpu: s.maxCpu7d,
+            maxRam: s.maxRam7d,
+            peakValue: max7d
+          });
+        }
+      });
+
+      above80in24h.sort((a, b) => b.peakValue - a.peakValue);
+      above80in7d.sort((a, b) => b.peakValue - a.peakValue);
+
+      return {
+        serverSummaries,
+        above80in24h,
+        above80in7d,
+        counts: {
+          current80Count,
+          current90Count,
+          peak24h80Count,
+          peak24h90Count,
+          peak7d80Count,
+          peak7d90Count
+        }
+      };
+    };
+
+    if (isMongoConnected()) {
+      // 1. Current metrics per server
+      const currentServers = await ServerMetric.aggregate([
+        { $sort: { timestamp: -1 } },
+        {
+          $group: {
+            _id: '$serverId',
+            serverId: { $first: '$serverId' },
+            serverName: { $first: '$serverName' },
+            cpuUsage: { $first: '$cpuUsage' },
+            ramUsagePercent: { $first: '$ramUsage.usagePercent' }
+          }
+        }
+      ]);
+
+      // 2. Max metrics in last 24h per server
+      const metrics24h = await ServerMetric.aggregate([
+        { $match: { timestamp: { $gte: twentyFourHoursAgo } } },
+        {
+          $group: {
+            _id: '$serverId',
+            serverId: { $first: '$serverId' },
+            serverName: { $first: '$serverName' },
+            maxCpu: { $max: '$cpuUsage' },
+            maxRam: { $max: '$ramUsage.usagePercent' }
+          }
+        }
+      ]);
+
+      // 3. Max metrics in last 7d per server
+      const metrics7d = await ServerMetric.aggregate([
+        { $match: { timestamp: { $gte: sevenDaysAgo } } },
+        {
+          $group: {
+            _id: '$serverId',
+            serverId: { $first: '$serverId' },
+            serverName: { $first: '$serverName' },
+            maxCpu: { $max: '$cpuUsage' },
+            maxRam: { $max: '$ramUsage.usagePercent' }
+          }
+        }
+      ]);
+
+      const currentMap = {};
+      currentServers.forEach(s => {
+        currentMap[s.serverId] = s;
+      });
+
+      const map7d = {};
+      metrics7d.forEach(s => {
+        map7d[s.serverId] = s;
+      });
+
+      const serverSummaries = [];
+      const allServerIds = Array.from(new Set([
+        ...currentServers.map(s => s.serverId),
+        ...metrics24h.map(s => s.serverId),
+        ...metrics7d.map(s => s.serverId)
+      ])).filter(id => !isDummyServer(id));
+
+      allServerIds.forEach(serverId => {
+        const current = currentMap[serverId] || { cpuUsage: 0, ramUsagePercent: 0, serverName: serverId };
+        const m24h = metrics24h.find(s => s.serverId === serverId) || { maxCpu: 0, maxRam: 0, serverName: current.serverName };
+        const m7d = map7d[serverId] || { maxCpu: 0, maxRam: 0, serverName: current.serverName };
+
+        serverSummaries.push({
+          serverId,
+          serverName: current.serverName,
+          currentCpu: current.cpuUsage,
+          currentRam: current.ramUsagePercent,
+          maxCpu24h: m24h.maxCpu,
+          maxRam24h: m24h.maxRam,
+          maxCpu7d: m7d.maxCpu,
+          maxRam7d: m7d.maxRam
+        });
+      });
+
+      return res.json(computeSummaryPayload(serverSummaries));
+    } else {
+      // In-Memory Fallback
+      const nowTime = Date.now();
+      const m24hList = inMemoryMetrics.filter(m => !isDummyServer(m.serverId) && new Date(m.timestamp).getTime() >= (nowTime - 24 * 60 * 60 * 1000));
+      const m7dList = inMemoryMetrics.filter(m => !isDummyServer(m.serverId) && new Date(m.timestamp).getTime() >= (nowTime - 7 * 24 * 60 * 60 * 1000));
+
+      const serverSummariesMap = {};
+
+      const getOrInit = (serverId, serverName) => {
+        if (!serverSummariesMap[serverId]) {
+          serverSummariesMap[serverId] = {
+            serverId,
+            serverName,
+            currentCpu: 0,
+            currentRam: 0,
+            maxCpu24h: 0,
+            maxRam24h: 0,
+            maxCpu7d: 0,
+            maxRam7d: 0
+          };
+        }
+        return serverSummariesMap[serverId];
+      };
+
+      const current = {};
+      inMemoryMetrics.forEach(m => {
+        if (!isDummyServer(m.serverId)) {
+          current[m.serverId] = m;
+        }
+      });
+      Object.values(current).forEach(m => {
+        const s = getOrInit(m.serverId, m.serverName);
+        s.currentCpu = m.cpuUsage;
+        s.currentRam = m.ramUsage.usagePercent;
+      });
+
+      m24hList.forEach(m => {
+        const s = getOrInit(m.serverId, m.serverName);
+        if (m.cpuUsage > s.maxCpu24h) s.maxCpu24h = m.cpuUsage;
+        if (m.ramUsage.usagePercent > s.maxRam24h) s.maxRam24h = m.ramUsage.usagePercent;
+      });
+
+      m7dList.forEach(m => {
+        const s = getOrInit(m.serverId, m.serverName);
+        if (m.cpuUsage > s.maxCpu7d) s.maxCpu7d = m.cpuUsage;
+        if (m.ramUsage.usagePercent > s.maxRam7d) s.maxRam7d = m.ramUsage.usagePercent;
+      });
+
+      return res.json(computeSummaryPayload(Object.values(serverSummariesMap)));
+    }
+  } catch (error) {
+    console.error('Error computing combustion summary:', error);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
 // 4. Time of day analysis across all servers
 router.get('/peak-analysis', async (req, res) => {
   try {
