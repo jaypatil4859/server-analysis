@@ -8,7 +8,7 @@ import laptopRoutes from './routes/laptopRoutes.js';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3971;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/server_analysis';
 
 // Middleware
