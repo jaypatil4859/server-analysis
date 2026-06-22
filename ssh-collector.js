@@ -10,8 +10,8 @@
  * - Configure the SSH user and target list below.
  */
 
-import { exec } from 'child_process';
-import util from 'util';
+const { exec } = require('child_process');
+const util = require('util');
 
 const execPromise = util.promisify(exec);
 

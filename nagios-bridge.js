@@ -22,12 +22,12 @@ const SERVER_SPECS = {
   'newmongo': { cores: 4, ramGB: 16, diskGB: 500 },
   'newprod': { cores: 8, ramGB: 16, diskGB: 250 },
   'newprodp1': { cores: 4, ramGB: 16, diskGB: 250 },
-  'newprodp2': { cores: 4, ramGB: 16, diskGB: 250 },
-  'newprodp3': { cores: 4, ramGB: 16, diskGB: 250 },
+  'newprodp2': { cores: 4, ramGB: 12, diskGB: 250 },
+  'newprodp3': { cores: 4, ramGB: 8, diskGB: 250 },
   'punctualiti-co': { cores: 8, ramGB: 16, diskGB: 250 },
   'rahehamysql': { cores: 8, ramGB: 16, diskGB: 500 },
   'raheja-app': { cores: 4, ramGB: 16, diskGB: 250 },
-  'rahejamongo': { cores: 4, ramGB: 16, diskGB: 500 },
+  'rahejamongo': { cores: 4, ramGB: 6, diskGB: 500 },
   'sgdb': { cores: 8, ramGB: 16, diskGB: 500 },
   'sify-app': { cores: 4, ramGB: 16, diskGB: 250 }
 };
