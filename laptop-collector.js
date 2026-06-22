@@ -2,7 +2,7 @@ import os from 'os';
 import fs from 'fs';
 import { execSync } from 'child_process';
 
-const API_URL = process.env.METRICS_API_URL || 'http://localhost:5000/api/laptop';
+const API_URL = process.env.METRICS_API_URL || 'http://localhost:3971/api/laptop';
 const LAPTOP_ID = process.env.LAPTOP_ID || os.hostname() || 'linux-laptop';
 const LAPTOP_NAME = process.env.LAPTOP_NAME || `${os.hostname()} (Linux)` || 'ZenBook Pro UX';
 const INTERVAL_MS = parseInt(process.env.COLLECT_INTERVAL_MS || '5000', 10);

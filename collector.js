@@ -25,7 +25,7 @@ async function getDiskUsage() {
 }
 
 // Configuration from environment variables
-const API_URL = process.env.METRICS_API_URL || 'http://localhost:5000/api/metrics';
+const API_URL = process.env.METRICS_API_URL || 'http://localhost:3971/api/metrics';
 const SERVER_ID = process.env.SERVER_ID || os.hostname() || 'unknown-server';
 const SERVER_NAME = process.env.SERVER_NAME || os.hostname() || 'Unknown Server';
 const INTERVAL_MS = parseInt(process.env.COLLECT_INTERVAL_MS || '5000', 10);

@@ -11,7 +11,7 @@
 const NAGIOS_URL = process.env.NAGIOS_URL || 'http://217.145.69.228/nagios';
 const NAGIOS_USER = process.env.NAGIOS_USER || 'nagiosadmin';
 const NAGIOS_PASS = process.env.NAGIOS_PASS || '4z1lO3lXxNa$';
-const DASHBOARD_API_URL = process.env.METRICS_API_URL || 'http://localhost:5000/api/metrics';
+const DASHBOARD_API_URL = process.env.METRICS_API_URL || 'http://localhost:3971/api/metrics';
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '30000', 10); // Poll Nagios every 30s
 
 // Host specs lookup table (CPU cores, RAM size in GB, Disk size in GB)
