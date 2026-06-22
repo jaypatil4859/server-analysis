@@ -14,6 +14,24 @@ const NAGIOS_PASS = process.env.NAGIOS_PASS || '4z1lO3lXxNa$';
 const DASHBOARD_API_URL = process.env.METRICS_API_URL || 'http://localhost:5000/api/metrics';
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '30000', 10); // Poll Nagios every 30s
 
+// Host specs lookup table (CPU cores, RAM size in GB, Disk size in GB)
+// Mapping uses sanitized lowercase hostname/serverId keys.
+const SERVER_SPECS = {
+  'in31': { cores: 4, ramGB: 16, diskGB: 250 },
+  'in44': { cores: 4, ramGB: 16, diskGB: 250 },
+  'newmongo': { cores: 4, ramGB: 16, diskGB: 500 },
+  'newprod': { cores: 8, ramGB: 16, diskGB: 250 },
+  'newprodp1': { cores: 4, ramGB: 16, diskGB: 250 },
+  'newprodp2': { cores: 4, ramGB: 16, diskGB: 250 },
+  'newprodp3': { cores: 4, ramGB: 16, diskGB: 250 },
+  'punctualiti-co': { cores: 8, ramGB: 16, diskGB: 250 },
+  'rahehamysql': { cores: 8, ramGB: 16, diskGB: 500 },
+  'raheja-app': { cores: 4, ramGB: 16, diskGB: 250 },
+  'rahejamongo': { cores: 4, ramGB: 16, diskGB: 500 },
+  'sgdb': { cores: 8, ramGB: 16, diskGB: 500 },
+  'sify-app': { cores: 4, ramGB: 16, diskGB: 250 }
+};
+
 console.log(`Starting Nagios Bridge...`);
 console.log(`Nagios Endpoint: ${NAGIOS_URL}`);
 console.log(`Dashboard Target: ${DASHBOARD_API_URL}`);
@@ -154,14 +172,20 @@ async function parseAndSendMetrics() {
     const serverId = hostName;
     const serverName = hostName;
     
+    const sanitizedId = serverId.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+    const specs = SERVER_SPECS[sanitizedId] || { cores: 4, ramGB: 16, diskGB: 250 };
+    const serverCores = specs.cores;
+    const specTotalRamBytes = specs.ramGB * 1024 * 1024 * 1024;
+    const specTotalDiskBytes = specs.diskGB * 1024 * 1024 * 1024;
+
     // Default fallback values if CPU/RAM service values are not parsed
-    let cpuUsage = 30 + Math.random() * 10;
-    let ramUsagePercent = 45 + Math.random() * 5;
-    let totalRamBytes = 16 * 1024 * 1024 * 1024;
-    let usedRamBytes = Math.round((ramUsagePercent / 100) * totalRamBytes);
-    let loadOneMin = 1.0;
-    let loadFiveMin = 0.9;
-    let loadFifteenMin = 0.85;
+    let cpuUsage = 0;
+    let ramUsagePercent = 0;
+    let totalRamBytes = specTotalRamBytes;
+    let usedRamBytes = 0;
+    let loadOneMin = 0.0;
+    let loadFiveMin = 0.0;
+    let loadFifteenMin = 0.0;
 
     let parsedCpu = null;
     let parsedRam = null;
@@ -175,49 +199,45 @@ async function parseAndSendMetrics() {
       if (details && details.plugin_output) {
         const val = parseCpuCheck(details.plugin_output);
         if (val !== null) {
-          parsedCpu = val;
-          // If CPU load is represented as a small number (e.g. 0.68 or 1.64), it's probably load average
-          if (val < 15) {
-            parsedLoad = {
-              oneMin: val,
-              fiveMin: parseFloat((val * 0.9).toFixed(2)),
-              fifteenMin: parseFloat((val * 0.85).toFixed(2))
-            };
-            parsedCpu = parseFloat(Math.min(99.9, val * 25).toFixed(1)); // Map load to CPU usage percentage
-          }
+          // Calculate CPU usage based on load average relative to core count
+          parsedCpu = parseFloat(Math.min(99.9, (val / serverCores) * 100).toFixed(1));
+          parsedLoad = {
+            oneMin: val,
+            fiveMin: parseFloat((val * 0.9).toFixed(2)),
+            fifteenMin: parseFloat((val * 0.85).toFixed(2))
+          };
         }
       }
     }
     
-    if (parsedLoad === null && hostServices['Load Average'] !== undefined) {
+    if (hostServices['Load Average'] !== undefined) {
       const details = await fetchServiceDetails(hostName, 'Load Average');
       if (details && details.plugin_output) {
         const load = parseLoadAverage(details.plugin_output);
         if (load) {
           parsedLoad = load;
           if (parsedCpu === null) {
-            parsedCpu = parseFloat(Math.min(99.9, load.oneMin * 25).toFixed(1));
+            parsedCpu = parseFloat(Math.min(99.9, (load.oneMin / serverCores) * 100).toFixed(1));
+          }
+        }
+      }
+    }
+
+    if (parsedLoad === null && hostServices['Uptime'] !== undefined) {
+      const details = await fetchServiceDetails(hostName, 'Uptime');
+      if (details && details.plugin_output) {
+        const load = parseLoadAverage(details.plugin_output);
+        if (load) {
+          parsedLoad = load;
+          if (parsedCpu === null) {
+            parsedCpu = parseFloat(Math.min(99.9, (load.oneMin / serverCores) * 100).toFixed(1));
           }
         }
       }
     }
     
-    // 2. Process Memory
-    if (hostServices['Memory Usage'] !== undefined) {
-      const details = await fetchServiceDetails(hostName, 'Memory Usage');
-      if (details && details.plugin_output) {
-        const pct = parseMemoryUsage(details.plugin_output);
-        if (pct !== null) {
-          parsedRam = {
-            totalBytes: 16 * 1024 * 1024 * 1024,
-            usedBytes: Math.round((pct / 100) * 16 * 1024 * 1024 * 1024),
-            usagePercent: pct
-          };
-        }
-      }
-    }
-    
-    if (parsedRam === null && hostServices['memory check'] !== undefined) {
+    // 2. Process Memory (Prefer precise memory check over generic Memory Usage)
+    if (hostServices['memory check'] !== undefined) {
       const details = await fetchServiceDetails(hostName, 'memory check');
       if (details) {
         const ram = parseMemoryCheck(details.plugin_output || '', details.long_plugin_output || '');
@@ -226,9 +246,23 @@ async function parseAndSendMetrics() {
         }
       }
     }
+    
+    if (parsedRam === null && hostServices['Memory Usage'] !== undefined) {
+      const details = await fetchServiceDetails(hostName, 'Memory Usage');
+      if (details && details.plugin_output) {
+        const pct = parseMemoryUsage(details.plugin_output);
+        if (pct !== null) {
+          parsedRam = {
+            totalBytes: specTotalRamBytes,
+            usedBytes: Math.round((pct / 100) * specTotalRamBytes),
+            usagePercent: pct
+          };
+        }
+      }
+    }
 
     // 3. Process Disk
-    let diskUsagePercent = 40 + Math.random() * 20; // default fallback
+    let diskUsagePercent = 0; // default fallback if unmonitored
     let parsedDiskPercent = null;
 
     if (hostServices['Disk Space'] !== undefined) {
@@ -247,11 +281,10 @@ async function parseAndSendMetrics() {
 
     if (parsedDiskPercent !== null) {
       diskUsagePercent = parsedDiskPercent;
+    } else {
+      diskUsagePercent = (hostServices['Disk Space'] !== undefined || hostServices['Disk Usage'] !== undefined) ? 40 : 0;
     }
-    let totalDiskBytes = 250 * 1024 * 1024 * 1024; // 250 GB default
-    if (serverName.toLowerCase().includes('db') || serverName.toLowerCase().includes('mongo') || serverName.toLowerCase().includes('mysql')) {
-      totalDiskBytes = 500 * 1024 * 1024 * 1024; // 500 GB for DBs
-    }
+    let totalDiskBytes = specTotalDiskBytes;
     let usedDiskBytes = Math.round((diskUsagePercent / 100) * totalDiskBytes);
 
     // Assign parsed metrics or keep defaults
@@ -269,7 +302,7 @@ async function parseAndSendMetrics() {
     
     // Prepare ServerPulse schema payload
     const payload = {
-      serverId: serverId.toLowerCase().replace(/[^a-z0-9-_]/g, '-'),
+      serverId: sanitizedId,
       serverName: serverName,
       cpuUsage: parseFloat(cpuUsage.toFixed(1)),
       ramUsage: {
@@ -287,7 +320,7 @@ async function parseAndSendMetrics() {
         fiveMin: parseFloat(loadFiveMin.toFixed(2)),
         fifteenMin: parseFloat(loadFifteenMin.toFixed(2))
       },
-      cpuCores: 4,
+      cpuCores: serverCores,
       timestamp: new Date().toISOString()
     };
 
