@@ -23,19 +23,19 @@ const SSH_KEY_PATH = process.env.SSH_KEY_PATH || ''; // Optional path to private
 
 // List of target servers to monitor
 const SERVERS = [
-  { id: 'in31', host: 'in31', name: 'in31', user: SSH_USER },
-  { id: 'in44', host: 'in44', name: 'in44', user: SSH_USER },
-  { id: 'newmongo', host: 'newmongo', name: 'newmongo', user: SSH_USER },
-  { id: 'newprod', host: 'newprod', name: 'newprod', user: SSH_USER },
-  { id: 'newprodp1', host: 'newprodp1', name: 'newprodp1', user: SSH_USER },
-  { id: 'newprodp2', host: 'newprodp2', name: 'newprodp2', user: SSH_USER },
-  { id: 'newprodp3', host: 'newprodp3', name: 'newprodp3', user: SSH_USER },
-  { id: 'punctualiti.co', host: 'punctualiti.co', name: 'punctualiti.co', user: SSH_USER },
-  { id: 'rahehamysql', host: 'rahehamysql', name: 'rahehamysql', user: SSH_USER },
-  { id: 'raheja-app', host: 'raheja-app', name: 'raheja-app', user: SSH_USER },
-  { id: 'rahejamongo', host: 'rahejamongo', name: 'rahejamongo', user: SSH_USER },
-  { id: 'sgdb', host: 'sgdb', name: 'sgdb', user: SSH_USER },
-  { id: 'sify-app', host: 'sify-app', name: 'sify-app', user: SSH_USER }
+  { id: 'in31', host: '180.187.54.31', name: 'in31', user: SSH_USER },
+  { id: 'in44', host: '180.187.54.44', name: 'in44', user: SSH_USER },
+  { id: 'newmongo', host: '161.248.37.104', name: 'newmongo', user: SSH_USER },
+  { id: 'newprod', host: '161.248.37.102', name: 'newprod', user: SSH_USER },
+  { id: 'newprodp1', host: '161.248.37.181', name: 'newprodp1', user: SSH_USER },
+  { id: 'newprodp2', host: '161.248.37.103', name: 'newprodp2', user: SSH_USER },
+  { id: 'newprodp3', host: '43.113.189.106', name: 'newprodp3', user: SSH_USER },
+  { id: 'punctualiti.co', host: '43.242.212.71', name: 'punctualiti.co', user: SSH_USER },
+  { id: 'rahehamysql', host: '161.248.37.87', name: 'rahehamysql', user: SSH_USER },
+  { id: 'raheja-app', host: '161.248.37.85', name: 'raheja-app', user: SSH_USER },
+  { id: 'rahejamongo', host: '161.248.37.86', name: 'rahejamongo', user: SSH_USER },
+  { id: 'sgdb', host: '154.210.160.250', name: 'sgdb', user: SSH_USER },
+  { id: 'sify-app', host: '100.85.117.165', name: 'sify-app', user: SSH_USER }
 ];
 // =======================================================
 
