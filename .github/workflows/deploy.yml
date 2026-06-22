@@ -1,0 +1,111 @@
+name: ServerPulse — Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─────────────────────────────────────────────
+  # JOB 1: Build + Test (runs on every PR & push)
+  # ─────────────────────────────────────────────
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --only=production
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend (production bundle)
+        working-directory: frontend
+        run: npm run build
+
+      - name: Verify build output exists
+        run: |
+          test -f frontend/dist/index.html && echo "✅ index.html present"
+          test -f frontend/dist/assets/*.js  && echo "✅ JS bundle present"
+
+      - name: Smoke-test backend startup
+        working-directory: backend
+        env:
+          PORT: 3971
+          MONGODB_URI: mongodb://127.0.0.1:27017/server_analysis
+        run: |
+          node server.js &
+          SERVER_PID=$!
+          sleep 4
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3971/health)
+          kill $SERVER_PID
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ Backend health check passed"
+          else
+            echo "❌ Backend did not respond (HTTP $STATUS)"
+            exit 1
+          fi
+
+  # ─────────────────────────────────────────────
+  # JOB 2: Deploy (only on push to main)
+  # ─────────────────────────────────────────────
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.PROD_SERVER_HOST }}
+          username: ${{ secrets.PROD_SERVER_USER }}
+          key:      ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          port:     22
+          script: |
+            set -e
+            cd /var/www/serverpulse
+            echo "── Pulling latest code ──"
+            git pull origin main
+
+            echo "── Installing backend dependencies ──"
+            cd backend && npm ci --only=production && cd ..
+
+            echo "── Building frontend ──"
+            cd frontend && npm ci && npm run build && cd ..
+
+            echo "── Copying frontend dist to web root ──"
+            sudo cp -r frontend/dist/* /var/www/serverpulse/frontend/
+
+            echo "── Reloading PM2 processes ──"
+            pm2 reload ecosystem.config.cjs --update-env
+            pm2 save
+
+            echo "── Reloading Nginx ──"
+            sudo nginx -t && sudo systemctl reload nginx
+
+            echo "── Health check ──"
+            sleep 3
+            curl -sf http://localhost:3971/health | grep healthy && echo "✅ Backend healthy"
+
+            echo "🚀 Deploy complete at $(date)"

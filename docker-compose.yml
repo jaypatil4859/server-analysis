@@ -20,11 +20,11 @@ services:
     container_name: serverpulse-backend
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "3971:3971"
     depends_on:
       - database
     environment:
-      - PORT=5000
+      - PORT=3971
       # Connects to database service hostname defined in this docker-compose
       - MONGODB_URI=mongodb://database:27017/server_analysis
       # Notification integrations (configured via .env in root if needed)
@@ -43,7 +43,7 @@ services:
     container_name: serverpulse-frontend
     restart: unless-stopped
     ports:
-      - "80:80" # Exposed HTTP port on the host
+      - "3970:80" # Exposed HTTP port on the host
     depends_on:
       - backend
 
@@ -60,7 +60,7 @@ services:
     depends_on:
       - backend
     environment:
-      - METRICS_API_URL=http://backend:5000/api/metrics
+      - METRICS_API_URL=http://backend:3971/api/metrics
       - POLL_INTERVAL_MS=10000 # Real-time poll interval (10 seconds)
       - SSH_USER=${SSH_USER:-root}
       - SSH_KEY_PATH=/root/.ssh/id_rsa_temp

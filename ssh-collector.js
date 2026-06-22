@@ -16,7 +16,7 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 
 // ==================== CONFIGURATION ====================
-const DASHBOARD_API_URL = process.env.METRICS_API_URL || 'http://localhost:5000/api/metrics';
+const DASHBOARD_API_URL = process.env.METRICS_API_URL || 'http://localhost:3971/api/metrics';
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '10000', 10); // Poll every 10 seconds for real-time tracking
 const SSH_USER = process.env.SSH_USER || 'root'; // Default SSH user
 const SSH_KEY_PATH = process.env.SSH_KEY_PATH || ''; // Optional path to private SSH key (e.g. '/home/sahil/.ssh/id_rsa')

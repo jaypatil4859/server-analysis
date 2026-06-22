@@ -11,7 +11,7 @@ import {
   CartesianGrid, Tooltip, Legend, BarChart, Bar, AreaChart, Area 
 } from 'recharts';
 
-const API_HOST = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? `${window.location.protocol}//${window.location.hostname}:5000` : window.location.origin);
+const API_HOST = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? `${window.location.protocol}//${window.location.hostname}:3971` : window.location.origin);
 const API_BASE = `${API_HOST}/api/metrics`;
 const LAPTOP_API_BASE = `${API_HOST}/api/laptop`;
 
@@ -778,7 +778,7 @@ export default function App() {
                   <span className="insight-lbl" style={{ display: 'block', marginBottom: '8px', textAlign: 'left' }}>Collector Startup Commands:</span>
                   <div className="code-block" style={{ textAlign: 'left', margin: 0 }}>
                     # Download & run the collector agent<br />
-                    METRICS_API_URL=http://localhost:5000/api/metrics \<br />
+                    METRICS_API_URL=http://localhost:3971/api/metrics \<br />
                     SERVER_ID=prod-web-01 SERVER_NAME="Web Server 01" \<br />
                     node collector.js
                   </div>
@@ -970,25 +970,41 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <label style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>Server:</label>
+                  <div className="chart-tabs" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '2px 8px' }}>
+                    <label style={{ 
+                      fontSize: '10px', 
+                      textTransform: 'uppercase', 
+                      letterSpacing: '0.05em', 
+                      color: 'var(--text-muted)',
+                      fontWeight: '500'
+                    }}>
+                      Server:
+                    </label>
                     <select 
                       value={selectedServerId} 
                       onChange={(e) => setSelectedServerId(e.target.value)}
                       style={{
-                        backgroundColor: 'var(--panel-bg)',
-                        border: '1px solid var(--panel-border)',
-                        borderRadius: '4px',
-                        padding: '4px 10px',
+                        backgroundColor: 'transparent',
+                        border: 'none',
                         fontSize: '11px',
-                        color: 'var(--text-primary)',
+                        fontWeight: '500',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        color: 'var(--luxury-gold)',
                         fontFamily: 'var(--font-sans)',
                         cursor: 'pointer',
-                        outline: 'none'
+                        outline: 'none',
+                        padding: '4px 6px'
                       }}
                     >
                       {servers.map(s => (
-                        <option key={s.serverId} value={s.serverId}>{s.serverName}</option>
+                        <option 
+                          key={s.serverId} 
+                          value={s.serverId}
+                          style={{ backgroundColor: 'var(--panel-bg)', color: 'var(--text-primary)' }}
+                        >
+                          {s.serverName}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -1344,7 +1360,7 @@ export default function App() {
                   Deploy the agent on your production servers to report health statistics:
                 </p>
                 <div className="code-block" style={{ textAlign: 'left' }}>
-                  METRICS_API_URL=http://[IP]:5000/api/metrics \<br />
+                  METRICS_API_URL=http://[IP]:3971/api/metrics \<br />
                   SERVER_ID=prod-web-01 SERVER_NAME="Web Server 01" \<br />
                   node collector.js
                 </div>
@@ -1461,7 +1477,7 @@ export default function App() {
                 <span className="insight-lbl" style={{ display: 'block', marginBottom: '8px', textAlign: 'left' }}>Laptop Agent Startup Command:</span>
                 <div className="code-block" style={{ textAlign: 'left', margin: 0 }}>
                   # Run the laptop telemetry client<br />
-                  METRICS_API_URL=http://localhost:5000/api/laptop \<br />
+                  METRICS_API_URL=http://localhost:3971/api/laptop \<br />
                   LAPTOP_ID=my-laptop LAPTOP_NAME="Personal Laptop" \<br />
                   node laptop-collector.js
                 </div>
@@ -1764,7 +1780,7 @@ export default function App() {
                   Run the telemetry client locally on your laptop to link live device metrics:
                 </p>
                 <div className="code-block" style={{ textAlign: 'left' }}>
-                  METRICS_API_URL=http://[IP]:5000/api/laptop \<br />
+                  METRICS_API_URL=http://[IP]:3971/api/laptop \<br />
                   LAPTOP_ID=my-zenbook LAPTOP_NAME="Personal Zenbook" \<br />
                   node laptop-collector.js
                 </div>

@@ -12,7 +12,7 @@ RUN npm ci --only=production
 COPY . .
 
 # Expose API port
-EXPOSE 5000
+EXPOSE 3971
 
 # Set Node environment to production
 ENV NODE_ENV=production

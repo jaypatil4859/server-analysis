@@ -1,150 +1,437 @@
-# ServerPulse DevOps Deployment Guide
+# ServerPulse Analytics — Production Deployment Guide
 
-This guide is prepared for DevOps engineers to deploy the **ServerPulse Analytics** dashboard and its real-time parallel SSH metrics collector in a production VM environment.
-
----
-
-## Architecture Overview
-
-1.  **Frontend:** React (Vite) client, served as static compiled HTML/JS/CSS assets via Nginx.
-2.  **Backend:** Node.js/Express API server running under PM2, which processes metrics and handles Webhook/Email alerts.
-3.  **Database:** MongoDB (either a local instance or a managed MongoDB Atlas cluster).
-4.  **Real-Time Collector (`ssh-collector.js`):** A centralized Node.js script managed by PM2 that connects directly to the operating system kernels of all 13 servers via SSH in parallel, retrieves exact metrics, and feeds them into the backend.
+> **For DevOps Engineers** — Everything needed to deploy, configure, and operate ServerPulse.
 
 ---
 
-## DevOps Pre-Deployment Configuration Checklist
+## Table of Contents
 
-Before launching the project, the DevOps engineer **MUST** make the following configuration changes:
-
-### 1. Configure SSH Access for the Collector
-The collector script (`ssh-collector.js`) runs centrally on the dashboard server and connects to the monitored VMs via SSH.
--   Ensure the user running the collector has passwordless SSH key-based access (`root` or standard user) to all 13 servers.
--   Open [ecosystem.config.cjs](file:///home/sahil/Documents/Jay%20Patil/server%20analysis/ecosystem.config.cjs) and configure the environment variables under `serverpulse-ssh-collector`:
-    -   `SSH_USER`: The username used to log into the servers (e.g. `root`, `ubuntu`).
-    -   `SSH_KEY_PATH`: The absolute file path to the SSH private key (e.g. `/home/devops/.ssh/id_rsa`).
-
-### 2. Configure Database and Alerts
-Open [ecosystem.config.cjs](file:///home/sahil/Documents/Jay%20Patil/server%20analysis/ecosystem.config.cjs) and update the `env` config block under `serverpulse-backend`:
--   `MONGODB_URI`: Point to your production database (e.g. local string `mongodb://127.0.0.1:27017/server_analysis` or MongoDB Atlas URI).
--   *(Optional)* Configure SMTP settings (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`) and alert webhooks (`SLACK_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL`) if you want notifications triggered when CPU or RAM usage exceeds 90%.
-
-### 3. Verify Server Target List (Optional)
-If server IP addresses or hostnames change in the future, edit the `SERVERS` array at the top of [ssh-collector.js](file:///home/sahil/Documents/Jay%20Patil/server%20analysis/ssh-collector.js) to match the new IPs.
+1. [Architecture](#architecture)
+2. [Port Assignments](#port-assignments)
+3. [Pre-Deployment Checklist](#pre-deployment-checklist)
+4. [Method A — Native VM (PM2 + Nginx)](#method-a--native-vm-pm2--nginx) ← *Recommended*
+5. [Method B — Docker Compose](#method-b--docker-compose)
+6. [CI/CD Pipeline (GitHub Actions)](#cicd-pipeline-github-actions)
+7. [SSH Collector Setup](#ssh-collector-setup)
+8. [Operations & Monitoring](#operations--monitoring)
+9. [Rollback Procedure](#rollback-procedure)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
-## Deployment Method 1: Native VM Service Setup (PM2 + Nginx)
+## Architecture
 
-Follow these steps to deploy directly on the host VM operating system:
+```
+Internet
+   │
+   ▼
+[Nginx :3970]  ←─── Static React SPA (frontend/dist/)
+   │                 Proxies /api/* and /health
+   ▼
+[PM2: Express :3971]  ←─── Node.js REST API
+   │
+   ▼
+[MongoDB :27017]  ←─── 217.145.69.228 (remote) or localhost
 
-### Step 1: Install Dependencies
-Run npm installation in the root directory and the sub-folders:
-```bash
-# Install root level dependencies
-npm install
-
-# Install backend dependencies
-cd backend && npm install --only=production
-cd ..
-
-# Install frontend dependencies
-cd frontend && npm install
+[PM2: ssh-collector]  ─────────────► All 13 target servers via SSH (every 10s)
 ```
 
-### Step 2: Build the Frontend React App
-Compile the static React production assets:
-```bash
-cd frontend
-npm run build
-cd ..
-```
-*This compiles the React files and outputs the production bundle to `frontend/dist/`.*
+### Services
 
-### Step 3: Copy Static Files to Web Server Root
-Create a directory to host the static frontend files and move them there:
+| Service | Technology | Port | Managed by |
+|---|---|---|---|
+| Frontend web UI | React + Vite → Nginx | **3970** | Nginx / Docker |
+| Backend REST API | Node.js + Express | **3971** | PM2 / Docker |
+| Database | MongoDB | 27017 | External host / Docker |
+| Metrics Collector | Node.js SSH poller | — | PM2 / Docker |
+
+---
+
+## Port Assignments
+
+| Port | Role |
+|------|------|
+| **3970** | HTTP — Frontend dashboard (public-facing) |
+| **3971** | HTTP — Backend API (internal, proxied via Nginx) |
+| **27017** | MongoDB (internal only — do NOT expose externally) |
+
+---
+
+## Pre-Deployment Checklist
+
+Before running any deployment step, verify the following:
+
+### 1. Create `backend/.env`
+
 ```bash
+cp backend/.env.example backend/.env
+nano backend/.env
+```
+
+Fill in:
+
+```env
+PORT=3971
+MONGODB_URI=mongodb://admin:<PASSWORD>@217.145.69.228:27017/server_analysis?authSource=admin
+
+# Optional — email alerts
+SMTP_HOST=smtp.mailgun.org
+SMTP_PORT=587
+SMTP_USER=alerts@company.com
+SMTP_PASS=your_smtp_password
+ALERT_EMAIL_RECIPIENT=devops@company.com
+
+# Optional — webhook alerts
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```
+
+> ⚠️ Never commit `backend/.env` — it is in `.gitignore`
+
+### 2. Verify SSH key access for the collector
+
+The collector (`ssh-collector.js`) connects via SSH to all 13 monitored servers. Ensure the user running PM2 has passwordless SSH access:
+
+```bash
+# Test connectivity to one server
+ssh -i /home/devops/.ssh/id_rsa root@180.187.54.31 "uptime"
+```
+
+### 3. Open firewall ports
+
+```bash
+# Allow frontend port (public)
+sudo ufw allow 3970/tcp
+
+# Allow Nginx management (optional)
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# Backend port is INTERNAL ONLY — NOT exposed publicly
+# MongoDB port is INTERNAL ONLY — NOT exposed publicly
+```
+
+---
+
+## Method A — Native VM (PM2 + Nginx)
+
+### Prerequisites
+
+```bash
+# Node.js 20
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
+sudo apt-get install -y nodejs
+
+# PM2 process manager
+sudo npm install -g pm2
+
+# Nginx
+sudo apt-get install -y nginx
+```
+
+### One-Command Deploy
+
+```bash
+# Clone the repo
+git clone https://github.com/YOUR_ORG/server-analysis.git /var/www/serverpulse
+cd /var/www/serverpulse
+
+# Configure environment (REQUIRED before first run)
+cp backend/.env.example backend/.env
+nano backend/.env   # ← fill in MONGODB_URI and any alert settings
+
+# Run the deploy script
+sudo bash deployment/deploy.sh
+```
+
+The deploy script automatically:
+- Installs npm packages
+- Builds the frontend production bundle
+- Copies static files to the Nginx web root
+- Configures and reloads Nginx
+- Starts all PM2 processes with auto-restart on boot
+- Runs a health check
+
+### Manual Step-by-Step
+
+If you prefer to run steps manually:
+
+```bash
+# 1. Install dependencies
+cd backend && npm ci --only=production && cd ..
+cd frontend && npm ci && cd ..
+
+# 2. Build frontend
+cd frontend && npm run build && cd ..
+
+# 3. Deploy static files
 sudo mkdir -p /var/www/serverpulse/frontend
-sudo cp -r frontend/dist/* /var/www/serverpulse/frontend/
-```
+sudo cp -r frontend/dist/. /var/www/serverpulse/frontend/
 
-### Step 4: Configure Nginx Web Server
-Copy the native Nginx configuration from your deployment folder into Nginx's sites directory:
-```bash
-# Copy the HTTP template
+# 4. Configure Nginx
 sudo cp deployment/nginx.native.conf /etc/nginx/sites-available/serverpulse
-
-# Create a symbolic link to enable the site
 sudo ln -sf /etc/nginx/sites-available/serverpulse /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
 
-# Verify Nginx configuration syntax is OK
-sudo nginx -t
-
-# Reload Nginx to apply changes
-sudo systemctl restart nginx
-```
-*(If you are deploying with SSL/TLS certificates, use `deployment/nginx.native.ssl.conf` instead).*
-
-### Step 5: Run the Backend & Collector under PM2
-PM2 will run the backend and the real-time collector as background daemons and keep them persistent.
-Navigate to the root directory (containing `ecosystem.config.cjs`) and execute:
-```bash
-# Start both backend and collector processes
+# 5. Start PM2
 pm2 start ecosystem.config.cjs
+pm2 startup && pm2 save
 
-# Make sure PM2 automatically runs them on system boot
-pm2 startup
+# 6. Verify
+curl -s http://localhost:3971/health
+```
+
+### Update an Existing Deployment
+
+```bash
+cd /var/www/serverpulse
+git pull origin main
+sudo bash deployment/deploy.sh
+```
+
+---
+
+## Method B — Docker Compose
+
+> Use this for isolated containerised deployments with bundled MongoDB.
+
+### Prerequisites
+
+```bash
+# Docker + Docker Compose
+curl -fsSL https://get.docker.com | bash
+sudo apt-get install -y docker-compose-plugin
+```
+
+### Deploy
+
+```bash
+git clone https://github.com/YOUR_ORG/server-analysis.git
+cd server-analysis
+
+# Create a .env file in the root for Docker Compose variable expansion
+cat > .env << 'EOF'
+SSH_KEY_PATH=/home/devops/.ssh/id_rsa
+SSH_USER=root
+SMTP_HOST=
+SMTP_USER=
+SMTP_PASS=
+ALERT_EMAIL_RECIPIENT=
+SLACK_WEBHOOK_URL=
+DISCORD_WEBHOOK_URL=
+EOF
+
+# Build and start all containers
+docker compose up -d --build
+```
+
+### Containers Launched
+
+| Container | Image | Host Port |
+|---|---|---|
+| `serverpulse-frontend` | Custom Nginx | **3970** |
+| `serverpulse-backend` | Custom Node.js | **3971** (internal) |
+| `serverpulse-db` | `mongo:7.0` | 27017 (internal) |
+| `serverpulse-collector` | `node:18-alpine` | — |
+
+### Docker Commands
+
+```bash
+docker compose logs -f               # Live logs from all containers
+docker compose logs -f backend       # Backend logs only
+docker compose restart backend       # Restart one service
+docker compose down                  # Stop all
+docker compose up -d --build         # Rebuild and restart
+docker compose exec backend sh       # Shell into backend container
+```
+
+---
+
+## CI/CD Pipeline (GitHub Actions)
+
+The repository includes a GitHub Actions workflow at `.github/workflows/deploy.yml`.
+
+### How it works
+
+| Trigger | Action |
+|---|---|
+| Push to `main` or Pull Request | Runs **build + test** (npm install, frontend build, backend smoke test) |
+| Push to `main` only | After tests pass: SSHes into production server and runs deploy script |
+
+### Setup
+
+1. Go to: **GitHub → Repo → Settings → Secrets and variables → Actions**
+2. Add these secrets (see [deployment/GITHUB_SECRETS.md](deployment/GITHUB_SECRETS.md) for details):
+
+| Secret | Value |
+|---|---|
+| `PROD_SERVER_HOST` | Production server IP / hostname |
+| `PROD_SERVER_USER` | SSH username (e.g. `devops`) |
+| `PROD_SSH_PRIVATE_KEY` | Full contents of the SSH private key |
+
+3. Every push to `main` now auto-deploys to production. ✅
+
+---
+
+## SSH Collector Setup
+
+The collector (`ssh-collector.js`) runs as a PM2 daemon on the dashboard server and polls all 13 monitored servers every 10 seconds via SSH.
+
+### Configure `ecosystem.config.cjs`
+
+```js
+// Under: serverpulse-ssh-collector → env
+SSH_USER: 'root',                        // ← SSH login user
+SSH_KEY_PATH: '/home/devops/.ssh/id_rsa' // ← Absolute path to private key
+```
+
+### Update the server list
+
+If server IPs change, edit `ssh-collector.js`:
+
+```js
+const SERVERS = [
+  { id: 'in31',      host: '180.187.54.31',  name: 'in31',      user: SSH_USER },
+  { id: 'in44',      host: '180.187.54.44',  name: 'in44',      user: SSH_USER },
+  // ... add/remove servers here
+];
+```
+
+### Running as a Standalone Agent (on a separate server)
+
+To run the collector on a different machine:
+
+```bash
+METRICS_API_URL=http://your-dashboard-server:3971/api/metrics \
+SSH_USER=root \
+SSH_KEY_PATH=/home/devops/.ssh/id_rsa \
+node ssh-collector.js
+```
+
+Or with PM2:
+
+```bash
+pm2 start ssh-collector.js --name serverpulse-ssh-collector \
+  --env METRICS_API_URL=http://dashboard-ip:3971/api/metrics
 pm2 save
 ```
 
 ---
 
-## Deployment Method 2: Containerized Setup (Docker Compose)
+## Operations & Monitoring
 
-Follow these steps to deploy using Docker Compose (which isolates all processes including MongoDB, the Backend, Frontend Nginx, and the SSH metrics collector):
+### PM2 Commands
 
-### Step 1: Set Host Environment Variables
-Ensure the following variables are exported in your environment or placed in a `.env` file in the root directory:
 ```bash
-# Required for mounting your DevOps private key into the collector container
-export SSH_KEY_PATH="/home/devops/.ssh/id_rsa"
-export SSH_USER="root"
+pm2 status                         # All process health
+pm2 logs                           # Live log stream (all)
+pm2 logs serverpulse-backend       # Backend logs only
+pm2 logs serverpulse-ssh-collector # Collector logs
+pm2 restart serverpulse-backend    # Restart backend
+pm2 reload ecosystem.config.cjs    # Zero-downtime reload
+pm2 monit                          # Real-time CPU/RAM dashboard
 ```
 
-### Step 2: Build and Launch the Containers
-Navigate to the root directory containing `docker-compose.yml` and run:
-```bash
-# Build and run containers in daemon mode
-docker-compose up -d --build
-```
-This will automatically spin up:
--   **`serverpulse-db`**: Persistent MongoDB database.
--   **`serverpulse-backend`**: Node.js API listener on port `5000`.
--   **`serverpulse-frontend`**: Serves React compiled app on port `80` (proxying `/api` to the backend).
--   **`serverpulse-collector`**: Runs the SSH collector in the background, mounting your SSH key.
+### API Health Checks
 
-### Step 3: Manage Containers
--   To check container logs: `docker-compose logs -f`
--   To restart services: `docker-compose restart`
--   To shut down the cluster: `docker-compose down`
+```bash
+# Backend health
+curl -s http://localhost:3971/health
+
+# Current server metrics
+curl -s http://localhost:3971/api/metrics/current | python3 -m json.tool
+
+# Active alerts
+curl -s http://localhost:3971/api/metrics/alerts | python3 -m json.tool
+
+# Laptop metrics
+curl -s http://localhost:3971/api/laptop/current | python3 -m json.tool
+```
+
+### Nginx
+
+```bash
+sudo nginx -t                      # Test config
+sudo systemctl reload nginx        # Reload config
+sudo systemctl status nginx        # Service status
+sudo tail -f /var/log/nginx/error.log  # Error logs
+```
 
 ---
 
-## Operations & Verification
+## Rollback Procedure
 
-DevOps can monitor the state of the applications using standard PM2 utility commands:
+If a deploy causes issues, run the rollback script to revert to the previous commit:
 
--   **Check Process Status:**
-    ```bash
-    pm2 status
-    ```
-    *(You should see both `serverpulse-backend` and `serverpulse-ssh-collector` online).*
--   **Inspect System Logs in Real-Time:**
-    ```bash
-    pm2 logs
-    ```
--   **Verify Current Active Metrics:**
-    To confirm that metrics are being successfully parsed and logged, query the backend current metrics API directly:
-    ```bash
-    curl -s http://localhost:5000/api/metrics/current
-    ```
+```bash
+sudo bash deployment/rollback.sh
+```
+
+This will:
+1. `git reset --hard HEAD~1` (reverts code)
+2. Rebuild the frontend
+3. Reload PM2
+4. Run a health check
+
+---
+
+## Troubleshooting
+
+### Backend not responding
+
+```bash
+pm2 logs serverpulse-backend    # Check for errors
+pm2 restart serverpulse-backend # Try restarting
+curl -v http://localhost:3971/health
+```
+
+### MongoDB connection fails
+
+```bash
+# The backend falls back to in-memory storage if MongoDB is unreachable
+# Check .env MONGODB_URI is correct:
+cat backend/.env | grep MONGO
+
+# Test connectivity directly:
+mongosh "mongodb://admin:<pass>@217.145.69.228:27017/server_analysis?authSource=admin"
+```
+
+### Nginx 502 Bad Gateway
+
+```bash
+# Backend process is likely down
+pm2 status
+pm2 restart serverpulse-backend
+sudo systemctl reload nginx
+```
+
+### SSH Collector shows "SSH connection failed"
+
+```bash
+# Test SSH access manually:
+ssh -i /home/devops/.ssh/id_rsa root@<server-ip> "uptime"
+
+# Check key permissions:
+chmod 600 /home/devops/.ssh/id_rsa
+
+# Check collector logs:
+pm2 logs serverpulse-ssh-collector --lines 50
+```
+
+### Port already in use
+
+```bash
+# Find what's using the port
+lsof -i :3971
+lsof -i :3970
+
+# Kill conflicting process if safe to do so
+kill -9 <PID>
+```
+
+---
+
+## Contact
+
+For any deployment issues, reach out to the development team via the project repository issue tracker.
