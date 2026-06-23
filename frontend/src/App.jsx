@@ -11,7 +11,7 @@ import {
   CartesianGrid, Tooltip, Legend, BarChart, Bar, AreaChart, Area 
 } from 'recharts';
 
-const API_HOST = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? `${window.location.protocol}//${window.location.hostname}:3971` : window.location.origin);
+const API_HOST = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? `${window.location.protocol}//${window.location.hostname}:3971` : `${window.location.origin}/monitoring`);
 const API_BASE = `${API_HOST}/api/metrics`;
 const LAPTOP_API_BASE = `${API_HOST}/api/laptop`;
 
@@ -389,11 +389,14 @@ export default function App() {
           }
         });
       } else {
-        setServers(serversData);
-        if (serversData.length > 0) {
-          const exists = serversData.some(s => s.serverId === selectedServerId);
+        const sortedServers = [...serversData].sort((a, b) => 
+          (a.serverName || '').localeCompare(b.serverName || '')
+        );
+        setServers(sortedServers);
+        if (sortedServers.length > 0) {
+          const exists = sortedServers.some(s => s.serverId === selectedServerId);
           if (!exists) {
-            activeServerId = serversData[0].serverId;
+            activeServerId = sortedServers[0].serverId;
             setSelectedServerId(activeServerId);
           }
         }
@@ -872,29 +875,32 @@ export default function App() {
                         </div>
 
                         {/* Storage (Disk) Progress Bar */}
-                        {server.diskUsage && (
-                          <div className="metric-row">
-                            <div className="metric-label-val">
-                              <span className="metric-label">
-                                <Database size={12} /> Storage (Disk)
-                              </span>
-                              <span className="metric-value disk" style={server.diskUsage.usagePercent >= 90 ? { color: 'var(--danger-color)' } : {}}>{server.diskUsage.usagePercent}%</span>
-                            </div>
-                            <div className="progress-track">
-                              <div 
-                                className="progress-bar disk" 
-                                style={{ 
-                                  width: `${server.diskUsage.usagePercent}%`,
-                                  backgroundColor: server.diskUsage.usagePercent >= 90 ? 'var(--danger-color)' : 'var(--disk-color)'
-                                }}
-                              ></div>
-                            </div>
-                            <div className="ram-details-text">
-                              {(server.diskUsage.usedBytes / (1024 * 1024 * 1024)).toFixed(1)} GB / 
-                              {(server.diskUsage.totalBytes / (1024 * 1024 * 1024)).toFixed(0)} GB
-                            </div>
+                        <div className="metric-row">
+                          <div className="metric-label-val">
+                            <span className="metric-label">
+                              <Database size={12} /> Storage (Disk)
+                            </span>
+                            <span className="metric-value disk" style={server.diskUsage && server.diskUsage.usagePercent >= 90 ? { color: 'var(--danger-color)' } : {}}>
+                              {server.diskUsage ? `${server.diskUsage.usagePercent}%` : 'N/A'}
+                            </span>
                           </div>
-                        )}
+                          <div className="progress-track">
+                            <div 
+                              className="progress-bar disk" 
+                              style={{ 
+                                width: server.diskUsage ? `${server.diskUsage.usagePercent}%` : '0%',
+                                backgroundColor: server.diskUsage && server.diskUsage.usagePercent >= 90 ? 'var(--danger-color)' : 'var(--disk-color)'
+                              }}
+                            ></div>
+                          </div>
+                          <div className="ram-details-text">
+                            {server.diskUsage ? (
+                              `${(server.diskUsage.usedBytes / (1024 * 1024 * 1024)).toFixed(1)} GB / ${(server.diskUsage.totalBytes / (1024 * 1024 * 1024)).toFixed(0)} GB`
+                            ) : (
+                              'No disk telemetry available'
+                            )}
+                          </div>
+                        </div>
 
                         {/* Load Displays */}
                         <div className="metric-row">
@@ -994,7 +1000,8 @@ export default function App() {
                         fontFamily: 'var(--font-sans)',
                         cursor: 'pointer',
                         outline: 'none',
-                        padding: '4px 6px'
+                        padding: '4px 6px',
+                        minWidth: '160px'
                       }}
                     >
                       {servers.map(s => (
@@ -1514,7 +1521,8 @@ export default function App() {
                   color: 'var(--text-primary)',
                   fontFamily: 'var(--font-sans)',
                   cursor: 'pointer',
-                  outline: 'none'
+                  outline: 'none',
+                  minWidth: '220px'
                 }}
               >
                 {laptops.map(l => (

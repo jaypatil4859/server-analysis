@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-APP_DIR="/var/www/serverpulse"
+APP_DIR="/var/www/server-analysis"
 BACKEND_PORT=3971
 YELLOW='\033[1;33m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
@@ -34,7 +34,8 @@ ok "Rolled back: $CURRENT → $ROLLED"
 step "Rebuilding frontend"
 cd "$APP_DIR/frontend"
 npm ci && npm run build
-cp -r dist/. /var/www/serverpulse/frontend/
+mkdir -p /var/www/server-analysis/frontend/monitoring
+cp -r dist/. /var/www/server-analysis/frontend/monitoring/
 ok "Frontend rebuilt and deployed"
 
 step "Reloading PM2"

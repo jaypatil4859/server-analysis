@@ -11,8 +11,20 @@ module.exports = {
       max_memory_restart: '1G',
       env: {
         NODE_ENV: 'production',
-        PORT: 3971,
-        MONGODB_URI: 'mongodb://127.0.0.1:27017/server_analysis'
+        PORT: 3971
+        // MONGODB_URI is loaded from backend/.env so it is configurable and not overridden by PM2
+      }
+    },
+    {
+      name: 'serverpulse-frontend',
+      script: './node_modules/vite/bin/vite.js',
+      args: 'preview',
+      cwd: './frontend',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '500M',
+      env: {
+        NODE_ENV: 'production'
       }
     },
     {

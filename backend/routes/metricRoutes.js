@@ -446,11 +446,13 @@ router.get('/current', async (req, res) => {
             serverName: { $first: '$serverName' },
             cpuUsage: { $first: '$cpuUsage' },
             ramUsage: { $first: '$ramUsage' },
+            diskUsage: { $first: '$diskUsage' },
             loadAverage: { $first: '$loadAverage' },
             cpuCores: { $first: '$cpuCores' },
             timestamp: { $first: '$timestamp' },
           }
-        }
+        },
+        { $sort: { serverName: 1 } }
       ]);
       return res.json(servers);
     } else {
@@ -461,7 +463,10 @@ router.get('/current', async (req, res) => {
           current[m.serverId] = m;
         }
       });
-      return res.json(Object.values(current));
+      const sortedCurrent = Object.values(current).sort((a, b) => 
+        (a.serverName || '').localeCompare(b.serverName || '')
+      );
+      return res.json(sortedCurrent);
     }
   } catch (error) {
     console.error('Error fetching current status:', error);

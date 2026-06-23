@@ -11,10 +11,10 @@
 set -euo pipefail
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-APP_DIR="/var/www/serverpulse"
-FRONTEND_ROOT="/var/www/serverpulse/frontend"
-NGINX_CONF="/etc/nginx/sites-available/serverpulse"
-NGINX_ENABLED="/etc/nginx/sites-enabled/serverpulse"
+APP_DIR="/var/www/server-analysis"
+FRONTEND_ROOT="/var/www/server-analysis/frontend"
+NGINX_CONF="/etc/nginx/sites-available/server-analysis"
+NGINX_ENABLED="/etc/nginx/sites-enabled/server-analysis"
 BACKEND_PORT=3971
 FRONTEND_PORT=3970
 
@@ -90,13 +90,14 @@ ok "Frontend production bundle built"
 
 # ── 6. Copy frontend dist to web root ─────────────────────────────────────────
 step "Deploying frontend assets"
-cp -r "$APP_DIR/frontend/dist/." "$FRONTEND_ROOT/"
-ok "Frontend assets deployed to $FRONTEND_ROOT"
+mkdir -p "$FRONTEND_ROOT/monitoring"
+cp -r "$APP_DIR/frontend/dist/." "$FRONTEND_ROOT/monitoring/"
+ok "Frontend assets deployed to $FRONTEND_ROOT/monitoring"
 
 # ── 7. Configure Nginx ─────────────────────────────────────────────────────────
 step "Configuring Nginx"
 cp "$APP_DIR/deployment/nginx.native.conf" "$NGINX_CONF"
-sed -i "s|/var/www/serverpulse/frontend/dist|$FRONTEND_ROOT|g" "$NGINX_CONF"
+sed -i "s|/var/www/server-analysis/frontend|$FRONTEND_ROOT|g" "$NGINX_CONF"
 
 if [ ! -L "$NGINX_ENABLED" ]; then
   ln -sf "$NGINX_CONF" "$NGINX_ENABLED"

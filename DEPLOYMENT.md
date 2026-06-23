@@ -1,437 +1,262 @@
-# ServerPulse Analytics — Production Deployment Guide
+# ServerPulse Analytics — Production Handover & Deployment Guide
 
-> **For DevOps Engineers** — Everything needed to deploy, configure, and operate ServerPulse.
-
----
-
-## Table of Contents
-
-1. [Architecture](#architecture)
-2. [Port Assignments](#port-assignments)
-3. [Pre-Deployment Checklist](#pre-deployment-checklist)
-4. [Method A — Native VM (PM2 + Nginx)](#method-a--native-vm-pm2--nginx) ← *Recommended*
-5. [Method B — Docker Compose](#method-b--docker-compose)
-6. [CI/CD Pipeline (GitHub Actions)](#cicd-pipeline-github-actions)
-7. [SSH Collector Setup](#ssh-collector-setup)
-8. [Operations & Monitoring](#operations--monitoring)
-9. [Rollback Procedure](#rollback-procedure)
-10. [Troubleshooting](#troubleshooting)
+> **For DevOps Engineers** — This step-by-step guide explains how to deploy, configure, and manage ServerPulse Analytics on your server using PM2 + Nginx (Native VM) or Docker Compose.
 
 ---
 
-## Architecture
+## Method A: Native VM Deployment (PM2 + Nginx)
 
-```
-Internet
-   │
-   ▼
-[Nginx :3970]  ←─── Static React SPA (frontend/dist/)
-   │                 Proxies /api/* and /health
-   ▼
-[PM2: Express :3971]  ←─── Node.js REST API
-   │
-   ▼
-[MongoDB :27017]  ←─── 217.145.69.228 (remote) or localhost
+Follow these steps to run the Vite frontend and Node backend on PM2 behind your server's Nginx proxy.
 
-[PM2: ssh-collector]  ─────────────► All 13 target servers via SSH (every 10s)
-```
-
-### Services
-
-| Service | Technology | Port | Managed by |
-|---|---|---|---|
-| Frontend web UI | React + Vite → Nginx | **3970** | Nginx / Docker |
-| Backend REST API | Node.js + Express | **3971** | PM2 / Docker |
-| Database | MongoDB | 27017 | External host / Docker |
-| Metrics Collector | Node.js SSH poller | — | PM2 / Docker |
-
----
-
-## Port Assignments
-
-| Port | Role |
-|------|------|
-| **3970** | HTTP — Frontend dashboard (public-facing) |
-| **3971** | HTTP — Backend API (internal, proxied via Nginx) |
-| **27017** | MongoDB (internal only — do NOT expose externally) |
-
----
-
-## Pre-Deployment Checklist
-
-Before running any deployment step, verify the following:
-
-### 1. Create `backend/.env`
-
+### Step 1: Install Node.js and PM2 on Ubuntu
+Update the system package list and install system utilities:
 ```bash
-cp backend/.env.example backend/.env
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y curl rsync git
+```
+Install Node.js 20 from NodeSource:
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+Install PM2 globally for process management:
+```bash
+sudo npm install -g pm2
+```
+Verify the installation:
+```bash
+node -v
+npm -v
+pm2 -v
+```
+
+### Step 2: Configure Environment Variables
+Navigate to your project directory:
+```bash
+cd /var/www/server-analysis
+```
+Create a backend environment configuration file:
+```bash
 nano backend/.env
 ```
-
-Fill in:
-
+Paste and save the following production credentials:
 ```env
 PORT=3971
-MONGODB_URI=mongodb://admin:<PASSWORD>@217.145.69.228:27017/server_analysis?authSource=admin
-
-# Optional — email alerts
-SMTP_HOST=smtp.mailgun.org
-SMTP_PORT=587
-SMTP_USER=alerts@company.com
-SMTP_PASS=your_smtp_password
-ALERT_EMAIL_RECIPIENT=devops@company.com
-
-# Optional — webhook alerts
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+MONGODB_URI=mongodb://admin:dMY8Rp0(K9S7Hy@217.145.69.228:27017/server_analysis?authSource=admin
 ```
 
-> ⚠️ Never commit `backend/.env` — it is in `.gitignore`
-
-### 2. Verify SSH key access for the collector
-
-The collector (`ssh-collector.js`) connects via SSH to all 13 monitored servers. Ensure the user running PM2 has passwordless SSH access:
-
+### Step 3: Generate a Production Build for React-Vite Frontend
+Navigate to the frontend directory and install dependencies:
 ```bash
-# Test connectivity to one server
-ssh -i /home/devops/.ssh/id_rsa root@180.187.54.31 "uptime"
+cd /var/www/server-analysis/frontend
+npm install
+```
+Build the project for production. The assets will automatically build under the `/monitoring/` base path:
+```bash
+npm run build
+```
+This generates a `dist/` folder containing the optimized assets.
+
+### Step 4: Move Static Build Files to Web Root
+Create the target directories under `/var/www/` for Nginx:
+```bash
+sudo mkdir -p /var/www/server-analysis/frontend/monitoring
+```
+Copy the compiled static assets:
+```bash
+sudo cp -r dist/. /var/www/server-analysis/frontend/monitoring/
+```
+Set proper ownership and permissions:
+```bash
+sudo chown -R www-data:www-data /var/www/server-analysis/frontend
+sudo chmod -R 755 /var/www/server-analysis/frontend
 ```
 
-### 3. Open firewall ports
+### Step 5: Configure and Run Applications on PM2
+PM2 will manage and keep your node processes (Express backend, Vite preview server, and SSH Metrics collector) alive.
 
+First, navigate to your root project folder:
 ```bash
-# Allow frontend port (public)
-sudo ufw allow 3970/tcp
-
-# Allow Nginx management (optional)
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-
-# Backend port is INTERNAL ONLY — NOT exposed publicly
-# MongoDB port is INTERNAL ONLY — NOT exposed publicly
+cd /var/www/server-analysis
 ```
-
----
-
-## Method A — Native VM (PM2 + Nginx)
-
-### Prerequisites
-
+Install backend dependencies:
 ```bash
-# Node.js 20
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
-sudo apt-get install -y nodejs
-
-# PM2 process manager
-sudo npm install -g pm2
-
-# Nginx
-sudo apt-get install -y nginx
+cd backend && npm install --only=production && cd ..
 ```
-
-### One-Command Deploy
-
+Start all applications with PM2 using the ecosystem configuration:
 ```bash
-# Clone the repo
-git clone https://github.com/YOUR_ORG/server-analysis.git /var/www/serverpulse
-cd /var/www/serverpulse
-
-# Configure environment (REQUIRED before first run)
-cp backend/.env.example backend/.env
-nano backend/.env   # ← fill in MONGODB_URI and any alert settings
-
-# Run the deploy script
-sudo bash deployment/deploy.sh
-```
-
-The deploy script automatically:
-- Installs npm packages
-- Builds the frontend production bundle
-- Copies static files to the Nginx web root
-- Configures and reloads Nginx
-- Starts all PM2 processes with auto-restart on boot
-- Runs a health check
-
-### Manual Step-by-Step
-
-If you prefer to run steps manually:
-
-```bash
-# 1. Install dependencies
-cd backend && npm ci --only=production && cd ..
-cd frontend && npm ci && cd ..
-
-# 2. Build frontend
-cd frontend && npm run build && cd ..
-
-# 3. Deploy static files
-sudo mkdir -p /var/www/serverpulse/frontend
-sudo cp -r frontend/dist/. /var/www/serverpulse/frontend/
-
-# 4. Configure Nginx
-sudo cp deployment/nginx.native.conf /etc/nginx/sites-available/serverpulse
-sudo ln -sf /etc/nginx/sites-available/serverpulse /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t && sudo systemctl reload nginx
-
-# 5. Start PM2
 pm2 start ecosystem.config.cjs
-pm2 startup && pm2 save
-
-# 6. Verify
-curl -s http://localhost:3971/health
 ```
+This launches three processes:
+- `serverpulse-backend` (REST API on port `3971`)
+- `serverpulse-frontend` (Vite Preview Server on port `3970`)
+- `serverpulse-ssh-collector` (Metrics poller daemon)
 
-### Update an Existing Deployment
-
+Manage PM2 processes:
 ```bash
-cd /var/www/serverpulse
-git pull origin main
-sudo bash deployment/deploy.sh
+pm2 list          # View running applications
+pm2 logs          # View live log streams
+pm2 restart all   # Restart all services
+pm2 stop all      # Stop all services
 ```
-
----
-
-## Method B — Docker Compose
-
-> Use this for isolated containerised deployments with bundled MongoDB.
-
-### Prerequisites
-
+Enable PM2 to launch automatically on server reboot:
 ```bash
-# Docker + Docker Compose
-curl -fsSL https://get.docker.com | bash
-sudo apt-get install -y docker-compose-plugin
+pm2 startup
 ```
-
-### Deploy
-
+Run the command suggested in your terminal, and save the process list:
 ```bash
-git clone https://github.com/YOUR_ORG/server-analysis.git
-cd server-analysis
-
-# Create a .env file in the root for Docker Compose variable expansion
-cat > .env << 'EOF'
-SSH_KEY_PATH=/home/devops/.ssh/id_rsa
-SSH_USER=root
-SMTP_HOST=
-SMTP_USER=
-SMTP_PASS=
-ALERT_EMAIL_RECIPIENT=
-SLACK_WEBHOOK_URL=
-DISCORD_WEBHOOK_URL=
-EOF
-
-# Build and start all containers
-docker compose up -d --build
-```
-
-### Containers Launched
-
-| Container | Image | Host Port |
-|---|---|---|
-| `serverpulse-frontend` | Custom Nginx | **3970** |
-| `serverpulse-backend` | Custom Node.js | **3971** (internal) |
-| `serverpulse-db` | `mongo:7.0` | 27017 (internal) |
-| `serverpulse-collector` | `node:18-alpine` | — |
-
-### Docker Commands
-
-```bash
-docker compose logs -f               # Live logs from all containers
-docker compose logs -f backend       # Backend logs only
-docker compose restart backend       # Restart one service
-docker compose down                  # Stop all
-docker compose up -d --build         # Rebuild and restart
-docker compose exec backend sh       # Shell into backend container
-```
-
----
-
-## CI/CD Pipeline (GitHub Actions)
-
-The repository includes a GitHub Actions workflow at `.github/workflows/deploy.yml`.
-
-### How it works
-
-| Trigger | Action |
-|---|---|
-| Push to `main` or Pull Request | Runs **build + test** (npm install, frontend build, backend smoke test) |
-| Push to `main` only | After tests pass: SSHes into production server and runs deploy script |
-
-### Setup
-
-1. Go to: **GitHub → Repo → Settings → Secrets and variables → Actions**
-2. Add these secrets (see [deployment/GITHUB_SECRETS.md](deployment/GITHUB_SECRETS.md) for details):
-
-| Secret | Value |
-|---|---|
-| `PROD_SERVER_HOST` | Production server IP / hostname |
-| `PROD_SERVER_USER` | SSH username (e.g. `devops`) |
-| `PROD_SSH_PRIVATE_KEY` | Full contents of the SSH private key |
-
-3. Every push to `main` now auto-deploys to production. ✅
-
----
-
-## SSH Collector Setup
-
-The collector (`ssh-collector.js`) runs as a PM2 daemon on the dashboard server and polls all 13 monitored servers every 10 seconds via SSH.
-
-### Configure `ecosystem.config.cjs`
-
-```js
-// Under: serverpulse-ssh-collector → env
-SSH_USER: 'root',                        // ← SSH login user
-SSH_KEY_PATH: '/home/devops/.ssh/id_rsa' // ← Absolute path to private key
-```
-
-### Update the server list
-
-If server IPs change, edit `ssh-collector.js`:
-
-```js
-const SERVERS = [
-  { id: 'in31',      host: '180.187.54.31',  name: 'in31',      user: SSH_USER },
-  { id: 'in44',      host: '180.187.54.44',  name: 'in44',      user: SSH_USER },
-  // ... add/remove servers here
-];
-```
-
-### Running as a Standalone Agent (on a separate server)
-
-To run the collector on a different machine:
-
-```bash
-METRICS_API_URL=http://your-dashboard-server:3971/api/metrics \
-SSH_USER=root \
-SSH_KEY_PATH=/home/devops/.ssh/id_rsa \
-node ssh-collector.js
-```
-
-Or with PM2:
-
-```bash
-pm2 start ssh-collector.js --name serverpulse-ssh-collector \
-  --env METRICS_API_URL=http://dashboard-ip:3971/api/metrics
 pm2 save
 ```
 
+### Step 6: Configure Nginx for Subpath Routing
+Create a new Nginx site configuration file:
+```bash
+sudo nano /etc/nginx/sites-available/server-analysis
+```
+Paste the following configuration:
+```nginx
+server {
+    listen 80;
+    server_name _; # Replace with your domain or IP address
+
+    # Root directory pointing to the web root
+    root /var/www/server-analysis/frontend;
+    index index.html index.htm;
+
+    # Serve built static frontend SPA under subpath
+    location /monitoring {
+        alias /var/www/server-analysis/frontend/monitoring;
+        index index.html index.htm;
+        try_files $uri $uri/ /monitoring/index.html;
+    }
+
+    # Vite Dev Server HMR client support for DevOps
+    location /@vite/ {
+        proxy_pass http://127.0.0.1:3970;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+    }
+
+    # Reverse proxy for local Express backend
+    location /monitoring/api/ {
+        proxy_pass http://127.0.0.1:3971/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Reverse proxy for local health check
+    location /monitoring/health {
+        proxy_pass http://127.0.0.1:3971/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # Redirect root / to /monitoring/
+    location = / {
+        return 301 /monitoring/;
+    }
+
+    # Error handling
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+}
+```
+Save the file and link the configuration to enable it:
+```bash
+sudo ln -sf /etc/nginx/sites-available/server-analysis /etc/nginx/sites-enabled/
+```
+Disable the default site (if conflicted):
+```bash
+sudo rm -f /etc/nginx/sites-enabled/default
+```
+Test and restart Nginx:
+```bash
+sudo nginx -t
+sudo systemctl restart nginx
+```
+
+### Step 7: Allow Traffic Through Firewall
+Ensure HTTP traffic and frontend direct access are allowed:
+```bash
+sudo ufw allow 80/tcp
+sudo ufw allow 3970/tcp
+```
+Now, visit your server’s IP in a browser:
+`http://your_server_ip/monitoring`
+
 ---
 
-## Operations & Monitoring
+## Method B: Docker Compose Deployment (Containerized)
 
-### PM2 Commands
+Follow these steps if you want to deploy the entire stack containerized.
 
+### Step 1: Install Docker and Docker Compose
+Install Docker on Ubuntu:
 ```bash
-pm2 status                         # All process health
-pm2 logs                           # Live log stream (all)
-pm2 logs serverpulse-backend       # Backend logs only
-pm2 logs serverpulse-ssh-collector # Collector logs
-pm2 restart serverpulse-backend    # Restart backend
-pm2 reload ecosystem.config.cjs    # Zero-downtime reload
-pm2 monit                          # Real-time CPU/RAM dashboard
+curl -fsSL https://get.docker.com | bash
+sudo apt install -y docker-compose-plugin
 ```
 
-### API Health Checks
-
+### Step 2: Configure Environment Variables
+Create a `.env` file in the root directory:
 ```bash
-# Backend health
-curl -s http://localhost:3971/health
-
-# Current server metrics
-curl -s http://localhost:3971/api/metrics/current | python3 -m json.tool
-
-# Active alerts
-curl -s http://localhost:3971/api/metrics/alerts | python3 -m json.tool
-
-# Laptop metrics
-curl -s http://localhost:3971/api/laptop/current | python3 -m json.tool
+cd /var/www/server-analysis
+nano .env
+```
+Paste and save the following:
+```env
+MONGODB_URI=mongodb://admin:dMY8Rp0(K9S7Hy@217.145.69.228:27017/server_analysis?authSource=admin
+SSH_KEY_PATH=/home/devops/.ssh/id_rsa
+SSH_USER=root
 ```
 
-### Nginx
-
+### Step 3: Run the Containers
+Build the Docker images and spin up the containers in background (detached) mode:
 ```bash
-sudo nginx -t                      # Test config
-sudo systemctl reload nginx        # Reload config
-sudo systemctl status nginx        # Service status
-sudo tail -f /var/log/nginx/error.log  # Error logs
+docker compose up -d --build
 ```
+This builds and boots:
+- `serverpulse-frontend` (Nginx serving frontend assets under `/monitoring` on port `3970`)
+- `serverpulse-backend` (Node Express API on port `3971`)
+- `serverpulse-collector` (Metrics poller script)
 
----
+### Step 4: Configure Host Nginx Reverse Proxy
+To hook up your host server Nginx to the containerized frontend, configure your Nginx server block:
+```nginx
+location /monitoring/ {
+    proxy_pass http://127.0.0.1:3970; # Forwards to the frontend docker container
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection 'upgrade';
+    proxy_set_header Host $host;
+    proxy_cache_bypass $http_upgrade;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
 
-## Rollback Procedure
-
-If a deploy causes issues, run the rollback script to revert to the previous commit:
-
-```bash
-sudo bash deployment/rollback.sh
+location /@vite/ {
+    proxy_pass http://127.0.0.1:3970;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection 'upgrade';
+    proxy_set_header Host $host;
+}
 ```
-
-This will:
-1. `git reset --hard HEAD~1` (reverts code)
-2. Rebuild the frontend
-3. Reload PM2
-4. Run a health check
-
----
-
-## Troubleshooting
-
-### Backend not responding
-
+Test and reload Nginx:
 ```bash
-pm2 logs serverpulse-backend    # Check for errors
-pm2 restart serverpulse-backend # Try restarting
-curl -v http://localhost:3971/health
-```
-
-### MongoDB connection fails
-
-```bash
-# The backend falls back to in-memory storage if MongoDB is unreachable
-# Check .env MONGODB_URI is correct:
-cat backend/.env | grep MONGO
-
-# Test connectivity directly:
-mongosh "mongodb://admin:<pass>@217.145.69.228:27017/server_analysis?authSource=admin"
-```
-
-### Nginx 502 Bad Gateway
-
-```bash
-# Backend process is likely down
-pm2 status
-pm2 restart serverpulse-backend
+sudo nginx -t
 sudo systemctl reload nginx
 ```
-
-### SSH Collector shows "SSH connection failed"
-
-```bash
-# Test SSH access manually:
-ssh -i /home/devops/.ssh/id_rsa root@<server-ip> "uptime"
-
-# Check key permissions:
-chmod 600 /home/devops/.ssh/id_rsa
-
-# Check collector logs:
-pm2 logs serverpulse-ssh-collector --lines 50
-```
-
-### Port already in use
-
-```bash
-# Find what's using the port
-lsof -i :3971
-lsof -i :3970
-
-# Kill conflicting process if safe to do so
-kill -9 <PID>
-```
-
----
-
-## Contact
-
-For any deployment issues, reach out to the development team via the project repository issue tracker.
+Visit `http://your_server_ip/monitoring` to verify. 🚀

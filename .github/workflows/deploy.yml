@@ -84,7 +84,7 @@ jobs:
           port:     22
           script: |
             set -e
-            cd /var/www/serverpulse
+            cd /var/www/server-analysis
             echo "── Pulling latest code ──"
             git pull origin main
 
@@ -95,7 +95,8 @@ jobs:
             cd frontend && npm ci && npm run build && cd ..
 
             echo "── Copying frontend dist to web root ──"
-            sudo cp -r frontend/dist/* /var/www/serverpulse/frontend/
+            sudo mkdir -p /var/www/server-analysis/frontend/monitoring
+            sudo cp -r frontend/dist/* /var/www/server-analysis/frontend/monitoring/
 
             echo "── Reloading PM2 processes ──"
             pm2 reload ecosystem.config.cjs --update-env
