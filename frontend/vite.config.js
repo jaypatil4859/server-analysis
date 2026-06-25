@@ -25,5 +25,17 @@ export default defineConfig({
     port: 3970,
     host: true,
     strictPort: true,
+    proxy: {
+      '/monitoring/api': {
+        target: 'http://localhost:3971',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/monitoring/, '')
+      },
+      '/monitoring/health': {
+        target: 'http://localhost:3971',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/monitoring/, '')
+      },
+    },
   }
 })
