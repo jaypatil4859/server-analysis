@@ -10,9 +10,14 @@
 
 set -euo pipefail
 
+# Detect project root directory dynamically
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
 # ── Configuration ─────────────────────────────────────────────────────────────
-APP_DIR="/var/www/server-analysis"
-FRONTEND_ROOT="/var/www/server-analysis/frontend"
+# Default deployment directory is where this script is located (PROJECT_ROOT)
+APP_DIR="${1:-$PROJECT_ROOT}"
+FRONTEND_ROOT="$APP_DIR/frontend"
 NGINX_CONF="/etc/nginx/sites-available/server-analysis"
 NGINX_ENABLED="/etc/nginx/sites-enabled/server-analysis"
 BACKEND_PORT=3971
@@ -51,18 +56,23 @@ ok "Node.js version OK: $(node --version)"
 
 # ── 2. Create app directory ────────────────────────────────────────────────────
 step "Setting up directories"
-mkdir -p "$APP_DIR" "$FRONTEND_ROOT"
-ok "App dir: $APP_DIR"
+if [ "$PROJECT_ROOT" != "$APP_DIR" ]; then
+  mkdir -p "$APP_DIR" "$FRONTEND_ROOT"
+  ok "Created App dir: $APP_DIR"
+else
+  ok "Using existing directory (in-place deploy): $APP_DIR"
+fi
 
 # ── 3. Copy project files ──────────────────────────────────────────────────────
 step "Copying project files"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
-rsync -av --exclude='node_modules' --exclude='.git' --exclude='frontend/dist' \
-  --exclude='*.log' --exclude='*.zip' --exclude='*.png' \
-  "$PROJECT_ROOT/" "$APP_DIR/"
-ok "Files synced to $APP_DIR"
+if [ "$PROJECT_ROOT" != "$APP_DIR" ]; then
+  rsync -av --exclude='node_modules' --exclude='.git' --exclude='frontend/dist' \
+    --exclude='*.log' --exclude='*.zip' --exclude='*.png' \
+    "$PROJECT_ROOT/" "$APP_DIR/"
+  ok "Files synced to $APP_DIR"
+else
+  ok "Running in-place deploy (skipping rsync since PROJECT_ROOT == APP_DIR)"
+fi
 
 # ── 4. Set up backend .env ─────────────────────────────────────────────────────
 step "Configuring backend environment"
@@ -93,6 +103,18 @@ step "Deploying frontend assets"
 mkdir -p "$FRONTEND_ROOT/monitoring"
 cp -r "$APP_DIR/frontend/dist/." "$FRONTEND_ROOT/monitoring/"
 ok "Frontend assets deployed to $FRONTEND_ROOT/monitoring"
+
+# Ensure Nginx user (www-data) can read built assets and traverse the app path
+if id -u www-data &>/dev/null; then
+  curr="$FRONTEND_ROOT/monitoring"
+  while [ "$curr" != "/" ] && [ -n "$curr" ]; do
+    chmod +x "$curr" 2>/dev/null || true
+    curr="$(dirname "$curr")"
+  done
+  chown -R www-data:www-data "$FRONTEND_ROOT/monitoring" 2>/dev/null || true
+  chmod -R 755 "$FRONTEND_ROOT/monitoring" 2>/dev/null || true
+  ok "Configured permissions for Nginx (www-data)"
+fi
 
 # ── 7. Configure Nginx ─────────────────────────────────────────────────────────
 step "Configuring Nginx"

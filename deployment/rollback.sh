@@ -9,7 +9,13 @@
 
 set -euo pipefail
 
-APP_DIR="/var/www/server-analysis"
+# Detect project root directory dynamically
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+# Default deployment directory is where this script is located (PROJECT_ROOT)
+APP_DIR="${1:-$PROJECT_ROOT}"
 BACKEND_PORT=3971
 YELLOW='\033[1;33m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
@@ -34,8 +40,8 @@ ok "Rolled back: $CURRENT → $ROLLED"
 step "Rebuilding frontend"
 cd "$APP_DIR/frontend"
 npm ci && npm run build
-mkdir -p /var/www/server-analysis/frontend/monitoring
-cp -r dist/. /var/www/server-analysis/frontend/monitoring/
+mkdir -p "$APP_DIR/frontend/monitoring"
+cp -r dist/. "$APP_DIR/frontend/monitoring/"
 ok "Frontend rebuilt and deployed"
 
 step "Reloading PM2"
