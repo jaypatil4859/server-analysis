@@ -152,9 +152,9 @@ server {
         proxy_set_header Host $host;
     }
 
-    # Reverse proxy for local Express backend
-    location /monitoring/api/ {
-        proxy_pass http://127.0.0.1:3971/api/;
+    # Reverse proxy for local Express backend and health checks
+    location /monitoring-apis/ {
+        proxy_pass http://127.0.0.1:3971/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -163,14 +163,6 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Reverse proxy for local health check
-    location /monitoring/health {
-        proxy_pass http://127.0.0.1:3971/health;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
     }
 
     # Redirect root / to /monitoring/
@@ -305,7 +297,7 @@ Copy `collector.js` onto the new target server.
 ### Step 2: Start the Collector Agent
 Run the collector on the new target server as a background service (using PM2 or systemd):
 ```bash
-METRICS_API_URL="http://<DASHBOARD_SERVER_IP>/monitoring/api/metrics" \
+METRICS_API_URL="http://<DASHBOARD_SERVER_IP>/monitoring-apis/api/metrics" \
 SERVER_ID="new-prod-web-04" \
 SERVER_NAME="Web Server 04" \
 node collector.js

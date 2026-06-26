@@ -9,15 +9,10 @@ export default defineConfig({
     port: 3970,
     host: true,
     proxy: {
-      '/monitoring/api': {
+      '/monitoring-apis': {
         target: 'http://localhost:3971',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/monitoring/, '')
-      },
-      '/monitoring/health': {
-        target: 'http://localhost:3971',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/monitoring/, '')
+        rewrite: (path) => path.replace(/^\/monitoring-apis/, '')
       },
     },
   },
@@ -26,15 +21,10 @@ export default defineConfig({
     host: true,
     strictPort: true,
     proxy: {
-      '/monitoring/api': {
+      '/monitoring-apis': {
         target: 'http://localhost:3971',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/monitoring/, '')
-      },
-      '/monitoring/health': {
-        target: 'http://localhost:3971',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/monitoring/, '')
+        rewrite: (path) => path.replace(/^\/monitoring-apis/, '')
       },
     },
   }

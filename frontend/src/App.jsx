@@ -11,7 +11,7 @@ import {
   CartesianGrid, Tooltip, Legend, BarChart, Bar, AreaChart, Area 
 } from 'recharts';
 
-const API_HOST = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? `${window.location.protocol}//${window.location.hostname}:3971` : `${window.location.origin}/monitoring`);
+const API_HOST = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? `${window.location.protocol}//${window.location.hostname}:3971` : `${window.location.origin}/monitoring-apis`);
 const API_BASE = `${API_HOST}/api/metrics`;
 const LAPTOP_API_BASE = `${API_HOST}/api/laptop`;
 
@@ -781,7 +781,7 @@ export default function App() {
                   <span className="insight-lbl" style={{ display: 'block', marginBottom: '8px', textAlign: 'left' }}>Collector Startup Commands:</span>
                   <div className="code-block" style={{ textAlign: 'left', margin: 0 }}>
                     # Download & run the collector agent<br />
-                    METRICS_API_URL=http://localhost:3971/api/metrics \<br />
+                    METRICS_API_URL={window.location.origin}/monitoring-apis/api/metrics \<br />
                     SERVER_ID=prod-web-01 SERVER_NAME="Web Server 01" \<br />
                     node collector.js
                   </div>
