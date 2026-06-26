@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  ServerPulse — Production Deploy Script
+#  Server Analysis — Production Deploy Script
 #  Run this on the production server to install/update the application.
 #
 #  Usage:
@@ -36,7 +36,7 @@ fi
 
 echo ""
 echo "╔══════════════════════════════════════════════╗"
-echo "║      ServerPulse Production Deploy           ║"
+echo "║     Server Analysis Production Deploy        ║"
 echo "╚══════════════════════════════════════════════╝"
 
 # ── 1. Check prerequisites ─────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ ok "Nginx reloaded successfully"
 # ── 8. Start/Reload PM2 ────────────────────────────────────────────────────────
 step "Starting PM2 processes"
 cd "$APP_DIR"
-if pm2 list | grep -q "serverpulse-backend"; then
+if pm2 list | grep -q "server-analysis-backend"; then
   pm2 reload ecosystem.config.cjs --update-env
   ok "PM2 processes reloaded"
 else
@@ -158,7 +158,7 @@ HTTP=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$BACKEND_PORT/he
 if [ "$HTTP" = "200" ]; then
   ok "Backend health check passed (HTTP $HTTP)"
 else
-  fail "Backend health check failed (HTTP $HTTP). Check: pm2 logs serverpulse-backend"
+  fail "Backend health check failed (HTTP $HTTP). Check: pm2 logs server-analysis-backend"
 fi
 
 # ── 10. Summary ────────────────────────────────────────────────────────────────

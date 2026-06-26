@@ -1,4 +1,4 @@
-name: ServerPulse — Build & Deploy
+name: Server Analysis — Build & Deploy
 
 on:
   push:

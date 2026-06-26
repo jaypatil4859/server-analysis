@@ -121,7 +121,7 @@ const sendAlertEmail = async (alert) => {
     });
 
     const mailOptions = {
-      from: `"ServerPulse Alerts" <${SMTP_USER}>`,
+      from: `"Server Analysis Alerts" <${SMTP_USER}>`,
       to: ALERT_EMAIL_RECIPIENT,
       subject: `🚨 CRITICAL ALERT: Server ${alert.serverName} ${alert.metricType} Usage Exceeds 90%`,
       text: `Critical resource usage detected on server:
@@ -161,7 +161,7 @@ Please investigate immediately.`,
           </tr>
         </table>
         <p style="font-size: 11px; color: #9c9790; margin-top: 25px; border-top: 1px solid rgba(168, 132, 72, 0.12); padding-top: 10px;">
-          This message was triggered automatically by ServerPulse Analytics.
+          This message was triggered automatically by Server Analysis Analytics.
         </p>
       </div>`
     };

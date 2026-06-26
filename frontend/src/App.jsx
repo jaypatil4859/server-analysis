@@ -574,7 +574,7 @@ export default function App() {
         <div className="app-title-container">
           <Activity className="app-logo" size={24} />
           <div>
-            <h1>ServerPulse <span>Analytics</span></h1>
+            <h1>Server Analysis <span>Analytics</span></h1>
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'left', marginTop: '4px', opacity: 0.85 }}>
               Real-time multi-server cluster metrics & alert response panel
             </p>

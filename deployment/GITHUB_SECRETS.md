@@ -1,4 +1,4 @@
-# ServerPulse — GitHub Secrets Reference
+# Server Analysis — GitHub Secrets Reference
 
 This file tells DevOps what secrets to configure in the GitHub repository for the CI/CD pipeline to work.
 

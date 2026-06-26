@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  ServerPulse — Rollback Script
+#  Server Analysis — Rollback Script
 #  Rolls back to the previous git commit if a deploy goes wrong.
 #
 #  Usage:
@@ -27,7 +27,7 @@ step() { echo -e "\n${YELLOW}── $1 ──${NC}"; }
 
 echo ""
 echo "╔═════════════════════════════╗"
-echo "║  ServerPulse — Rollback     ║"
+echo "║  Server Analysis — Rollback ║"
 echo "╚═════════════════════════════╝"
 
 step "Rolling back git to previous commit"

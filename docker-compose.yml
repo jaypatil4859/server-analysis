@@ -4,7 +4,7 @@ services:
   # MongoDB Database Service
   database:
     image: mongo:7.0
-    container_name: serverpulse-db
+    container_name: server-analysis-db
     restart: unless-stopped
     ports:
       - "27017:27017" # Exposes DB for external check or direct access
@@ -17,7 +17,7 @@ services:
   backend:
     build:
       context: ./backend
-    container_name: serverpulse-backend
+    container_name: server-analysis-backend
     restart: unless-stopped
     ports:
       - "3971:3971"
@@ -40,7 +40,7 @@ services:
   frontend:
     build:
       context: ./frontend
-    container_name: serverpulse-frontend
+    container_name: server-analysis-frontend
     restart: unless-stopped
     ports:
       - "3970:80" # Exposed HTTP port on the host
@@ -50,7 +50,7 @@ services:
   # Centralized SSH Real-Time Collector
   collector:
     image: node:18-alpine
-    container_name: serverpulse-collector
+    container_name: server-analysis-collector
     restart: unless-stopped
     working_dir: /usr/src/app
     volumes:

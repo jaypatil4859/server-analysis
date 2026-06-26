@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  ServerPulse — Automated SSH Key Distribution Script
+#  Server Analysis — Automated SSH Key Distribution Script
 #  Distributes the SSH public key to all 13 production target servers automatically.
 #
 #  Usage:

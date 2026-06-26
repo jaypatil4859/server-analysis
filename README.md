@@ -1,4 +1,4 @@
-# ServerPulse Analytics
+# Server Analysis Analytics
 
 > Real-time multi-server performance & load monitoring dashboard.
 
@@ -6,9 +6,9 @@
 
 ---
 
-## What is ServerPulse?
+## What is Server Analysis?
 
-ServerPulse is a self-hosted analytics dashboard that monitors CPU, RAM, disk, load average, and alerts across a fleet of Linux servers in real time. It connects directly to server kernels via SSH — no agent installation required on target machines.
+Server Analysis is a self-hosted analytics dashboard that monitors CPU, RAM, disk, load average, and alerts across a fleet of Linux servers in real time. It connects directly to server kernels via SSH — no agent installation required on target machines.
 
 **Live at:** `http://your-server-ip:3970`
 
@@ -138,7 +138,7 @@ See [deployment/GITHUB_SECRETS.md](deployment/GITHUB_SECRETS.md) for setup.
 ```bash
 pm2 status                      # Process health
 pm2 logs                        # Live log stream
-pm2 restart serverpulse-backend # Restart backend
+pm2 restart server-analysis-backend # Restart backend
 curl http://localhost:3971/health  # Health check
 ```
 

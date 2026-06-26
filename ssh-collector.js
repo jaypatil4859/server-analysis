@@ -1,5 +1,5 @@
 /**
- * Hybrid SSH & Nagios Real-Time Collector for ServerPulse
+ * Hybrid SSH & Nagios Real-Time Collector for Server Analysis
  * 
  * First preference: Connect directly to target servers via SSH to pull 
  * accurate specs and metrics.
@@ -399,7 +399,7 @@ function parseMemoryCheck(pluginOutput, longPluginOutput) {
 }
 
 /**
- * Post metrics to ServerPulse backend API
+ * Post metrics to Server Analysis backend API
  */
 async function sendToBackend(payload) {
   const response = await fetch(DASHBOARD_API_URL, {

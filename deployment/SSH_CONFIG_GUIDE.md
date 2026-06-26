@@ -5,11 +5,11 @@ This guide explains how to set up key-based SSH access and configure the `SSH_US
 ---
 
 ## Step 1: Generate an SSH Keypair (If not already created)
-On the **ServerPulse Dashboard Server** (where PM2 is running), check if you already have an SSH key. If not, generate a new one:
+On the **Server Analysis Dashboard Server** (where PM2 is running), check if you already have an SSH key. If not, generate a new one:
 
 ```bash
 # Generate a new 4096-bit RSA keypair (press Enter to accept default path and empty passphrase)
-ssh-keygen -t rsa -b 4096 -C "serverpulse-collector"
+ssh-keygen -t rsa -b 4096 -C "server-analysis-collector"
 ```
 This generates:
 *   Private key: `~/.ssh/id_rsa`
@@ -74,7 +74,7 @@ pm2 save
 
 Check the logs to verify connections are succeeding:
 ```bash
-pm2 logs serverpulse-ssh-collector
+pm2 logs server-analysis-ssh-collector
 ```
 You should see:
 ```text

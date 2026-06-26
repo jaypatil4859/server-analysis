@@ -1,6 +1,6 @@
-# ServerPulse Analytics — Production Handover & Deployment Guide
+# Server Analysis Analytics — Production Handover & Deployment Guide
 
-> **For DevOps Engineers** — This step-by-step guide explains how to deploy, configure, and manage ServerPulse Analytics on your server using PM2 + Nginx (Native VM) or Docker Compose.
+> **For DevOps Engineers** — This step-by-step guide explains how to deploy, configure, and manage Server Analysis Analytics on your server using PM2 + Nginx (Native VM) or Docker Compose.
 
 ---
 
@@ -101,9 +101,9 @@ Start all applications with PM2 using the ecosystem configuration:
 pm2 start ecosystem.config.cjs
 ```
 This launches three processes:
-- `serverpulse-backend` (REST API on port `3971`)
-- `serverpulse-frontend` (Vite Preview Server on port `3970`)
-- `serverpulse-ssh-collector` (Metrics poller daemon)
+- `server-analysis-backend` (REST API on port `3971`)
+- `server-analysis-frontend` (Vite Preview Server on port `3970`)
+- `server-analysis-ssh-collector` (Metrics poller daemon)
 
 Manage PM2 processes:
 ```bash
@@ -240,9 +240,9 @@ Build the Docker images and spin up the containers in background (detached) mode
 docker compose up -d --build
 ```
 This builds and boots:
-- `serverpulse-frontend` (Nginx serving frontend assets under `/monitoring` on port `3970`)
-- `serverpulse-backend` (Node Express API on port `3971`)
-- `serverpulse-collector` (Metrics poller script)
+- `server-analysis-frontend` (Nginx serving frontend assets under `/monitoring` on port `3970`)
+- `server-analysis-backend` (Node Express API on port `3971`)
+- `server-analysis-collector` (Metrics poller script)
 
 ### Step 4: Configure Host Nginx Reverse Proxy
 To hook up your host server Nginx to the containerized frontend, configure your Nginx server block:

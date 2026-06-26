@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'serverpulse-backend',
+      name: 'server-analysis-backend',
       script: './server.js',
       cwd: './backend',
       instances: 'max', // Utilizes all available CPU cores
@@ -16,7 +16,7 @@ module.exports = {
       }
     },
     {
-      name: 'serverpulse-frontend',
+      name: 'server-analysis-frontend',
       script: './node_modules/vite/bin/vite.js',
       args: 'preview',
       cwd: './frontend',
@@ -28,7 +28,7 @@ module.exports = {
       }
     },
     {
-      name: 'serverpulse-ssh-collector',
+      name: 'server-analysis-ssh-collector',
       script: './ssh-collector.js',
       cwd: './',
       autorestart: true,

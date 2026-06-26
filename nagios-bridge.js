@@ -1,10 +1,10 @@
 // Robust Nagios Bridge (requires Node.js v18+)
 
 /**
- * Nagios to ServerPulse Dashboard Integration Bridge
+ * Nagios to Server Analysis Dashboard Integration Bridge
  * 
- * Run this script on a machine that has access to both your Nagios server and the ServerPulse dashboard backend.
- * It queries Nagios statusjson.cgi API, parses real CPU/RAM/Load metrics, and pushes them to ServerPulse.
+ * Run this script on a machine that has access to both your Nagios server and the Server Analysis dashboard backend.
+ * It queries Nagios statusjson.cgi API, parses real CPU/RAM/Load metrics, and pushes them to Server Analysis.
  */
 
 // Configuration - Customize or load from environment
@@ -154,7 +154,7 @@ function parseMemoryCheck(pluginOutput, longPluginOutput) {
 }
 
 /**
- * Map Nagios service/host data to ServerPulse dashboard payloads
+ * Map Nagios service/host data to Server Analysis dashboard payloads
  */
 async function parseAndSendMetrics() {
   console.log(`\n--- Polling Nagios Status... ---`);
@@ -301,7 +301,7 @@ async function parseAndSendMetrics() {
       loadFifteenMin = parsedLoad.fifteenMin;
     }
     
-    // Prepare ServerPulse schema payload
+    // Prepare Server Analysis schema payload
     const payload = {
       serverId: sanitizedId,
       serverName: serverName,
@@ -325,7 +325,7 @@ async function parseAndSendMetrics() {
       timestamp: new Date().toISOString()
     };
 
-    // Forward metrics to ServerPulse Backend
+    // Forward metrics to Server Analysis Backend
     try {
       const postResponse = await fetch(DASHBOARD_API_URL, {
         method: 'POST',
