@@ -16,7 +16,7 @@ app.use(cors());
 app.use(express.json());
 
 // Routes
-app.use('/api/metrics', metricRoutes);
+app.use('monitoring-apis/metrics', metricRoutes);
 app.use('/api/laptop', laptopRoutes);
 
 // Health Check
