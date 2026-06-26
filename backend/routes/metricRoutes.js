@@ -259,7 +259,7 @@ router.post('/', async (req, res) => {
 
     if (isMongoConnected()) {
       const existingCount = await ServerMetric.countDocuments({ serverId });
-      if (existingCount === 0) {
+      if (existingCount === 0 && process.env.SEED_DUMMY_HISTORY === 'true') {
         console.log(`[DB API] Seeding 7 days of history in MongoDB for new server: ${serverId}`);
         const now = Date.now();
         const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
@@ -317,7 +317,7 @@ router.post('/', async (req, res) => {
       await metric.save();
     } else {
       const hasHistory = inMemoryMetrics.some(m => m.serverId === serverId);
-      if (!hasHistory) {
+      if (!hasHistory && process.env.SEED_DUMMY_HISTORY === 'true') {
         console.log(`[In-Memory API] Seeding 7 days of history for new server: ${serverId}`);
         const now = Date.now();
         const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;

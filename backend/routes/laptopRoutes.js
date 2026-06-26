@@ -183,7 +183,7 @@ router.post('/', async (req, res) => {
 
     if (isMongoConnected()) {
       const existingCount = await LaptopMetric.countDocuments({ laptopId });
-      if (existingCount === 0) {
+      if (existingCount === 0 && process.env.SEED_DUMMY_HISTORY === 'true') {
         console.log(`[DB Laptop API] Seeding 24h of history in MongoDB for new laptop: ${laptopId}`);
         const now = Date.now();
         const oneDayMs = 24 * 60 * 60 * 1000;
@@ -281,7 +281,7 @@ router.post('/', async (req, res) => {
       await metric.save();
     } else {
       const hasHistory = inMemoryLaptopMetrics.some(m => m.laptopId === laptopId);
-      if (!hasHistory) {
+      if (!hasHistory && process.env.SEED_DUMMY_HISTORY === 'true') {
         console.log(`[In-Memory Laptop API] Seeding 24h of history for new laptop: ${laptopId}`);
         const now = Date.now();
         const oneDayMs = 24 * 60 * 60 * 1000;
