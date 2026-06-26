@@ -33,16 +33,29 @@ pm2 -v
 ### Step 2: Configure Environment Variables
 Navigate to your project directory:
 ```bash
-cd /var/www/server-analysis
+cd /var/dev/server-analysis
 ```
 Create a backend environment configuration file:
 ```bash
 nano backend/.env
 ```
-Paste and save the following production credentials:
+Paste and save the following production variables:
 ```env
 PORT=3971
 MONGODB_URI=mongodb://admin:dMY8Rp0(K9S7Hy@217.145.69.228:27017/server_analysis?authSource=admin
+
+# --- SSH Target Probing ---
+SSH_USER=root
+SSH_KEY_PATH=/root/.ssh/id_rsa
+
+# --- Nagios Fallback Bridge ---
+NAGIOS_URL=http://217.145.69.228/nagios
+NAGIOS_USER=nagiosadmin
+NAGIOS_PASS=4z1lO3lXxNa$
+
+# --- DB Seeding Toggle ---
+# Set to 'true' to generate 7-day simulated logs on first connect, or omit/set to 'false' to show only real metrics
+SEED_DUMMY_HISTORY=false
 ```
 
 ### Step 3: Generate a Production Build for React-Vite Frontend
@@ -260,3 +273,46 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 Visit `http://your_server_ip/monitoring` to verify. 🚀
+
+---
+
+## Method C: Automated SSH Key Distribution
+
+To automate the key distribution to all 13 production target servers, DevOps can run the automated distribution script:
+
+```bash
+# 1. Make the script executable
+chmod +x deployment/setup-ssh-keys.sh
+
+# 2. Run the script
+./deployment/setup-ssh-keys.sh
+```
+
+This script will:
+*   Install `sshpass` if needed to push the public key automatically if a password is provided.
+*   Distribute your public key (`~/.ssh/id_rsa.pub`) to all 13 remote targets.
+*   Verify keyless connections to all servers to ensure they are configured correctly.
+
+---
+
+## Method D: Automatic Mapping of New Servers (Zero Config)
+
+When deploying a new server to the cluster, there is **no need to manually edit configuration files** to register it on the dashboard. The server maps itself automatically.
+
+### Step 1: Copy the Collector Agent
+Copy `collector.js` onto the new target server.
+
+### Step 2: Start the Collector Agent
+Run the collector on the new target server as a background service (using PM2 or systemd):
+```bash
+METRICS_API_URL="http://<DASHBOARD_SERVER_IP>/monitoring/api/metrics" \
+SERVER_ID="new-prod-web-04" \
+SERVER_NAME="Web Server 04" \
+node collector.js
+```
+
+### How it behaves:
+*   The dashboard backend dynamically detects the new server registration on its first metric post.
+*   It automatically records the server's specifications (cores, total memory, and disk sizes) directly from the OS.
+*   The server will **automatically pop up** in the Server Fleet summary on the frontend dashboard without requiring any redeploys or manually restarting services.
+
