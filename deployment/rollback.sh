@@ -39,7 +39,7 @@ ok "Rolled back: $CURRENT → $ROLLED"
 
 step "Rebuilding frontend"
 cd "$APP_DIR/frontend"
-npm ci && npm run build
+npm ci --legacy-peer-deps && npm run build
 mkdir -p "$APP_DIR/frontend/monitoring"
 cp -r dist/. "$APP_DIR/frontend/monitoring/"
 ok "Frontend rebuilt and deployed"

@@ -94,7 +94,7 @@ ok "Backend npm packages installed"
 
 step "Installing & building frontend"
 cd "$APP_DIR/frontend"
-npm ci
+npm ci --legacy-peer-deps
 npm run build
 ok "Frontend production bundle built"
 
