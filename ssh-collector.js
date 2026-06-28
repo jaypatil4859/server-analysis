@@ -398,20 +398,83 @@ function parseMemoryCheck(pluginOutput, longPluginOutput) {
   return null;
 }
 
+let mongooseInstance = null;
+let ServerMetricModel = null;
+
+async function saveToMongoDirectly(payload) {
+  try {
+    const path = require('path');
+    const dotenv = require('./backend/node_modules/dotenv');
+    dotenv.config({ path: path.join(__dirname, '.env') });
+
+    const mongoUri = process.env.MONGODB_URI;
+    if (!mongoUri) {
+      throw new Error('MONGODB_URI is not defined in environment or .env file');
+    }
+
+    const mongoose = require('./backend/node_modules/mongoose');
+
+    if (!mongooseInstance) {
+      console.log(`[Mongo Fallback] Connecting directly to MongoDB...`);
+      mongooseInstance = await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 5000 });
+      console.log('[Mongo Fallback] Connected to MongoDB successfully.');
+      
+      // Define schema and model matching backend/models/ServerMetric.js
+      const ServerMetricSchema = new mongoose.Schema({
+        serverId: { type: String, required: true, index: true },
+        serverName: { type: String, required: true },
+        cpuUsage: { type: Number, required: true },
+        ramUsage: {
+          totalBytes: { type: Number, required: true },
+          usedBytes: { type: Number, required: true },
+          usagePercent: { type: Number, required: true }
+        },
+        diskUsage: {
+          totalBytes: { type: Number },
+          usedBytes: { type: Number },
+          usagePercent: { type: Number }
+        },
+        loadAverage: {
+          oneMin: { type: Number, required: true },
+          fiveMin: { type: Number, required: true },
+          fifteenMin: { type: Number, required: true }
+        },
+        cpuCores: { type: Number, default: 1 },
+        timestamp: { type: Date, default: Date.now, index: true }
+      });
+      ServerMetricSchema.index({ serverId: 1, timestamp: -1 });
+      
+      ServerMetricModel = mongoose.models.ServerMetric || mongoose.model('ServerMetric', ServerMetricSchema);
+    }
+
+    const metric = new ServerMetricModel(payload);
+    await metric.save();
+    console.log(`[Mongo Fallback Success] Successfully saved metrics for ${payload.serverName} directly to MongoDB.`);
+  } catch (mongoErr) {
+    console.error(`[Mongo Fallback Failed] Failed to save metrics directly to MongoDB:`, mongoErr.message);
+  }
+}
+
 /**
  * Post metrics to Server Analysis backend API
  */
 async function sendToBackend(payload) {
-  const response = await fetch(DASHBOARD_API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  if (!response.ok) {
-    const txt = await response.text();
-    throw new Error(`HTTP ${response.status} - ${txt}`);
+  try {
+    const response = await fetch(DASHBOARD_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      const txt = await response.text();
+      throw new Error(`HTTP ${response.status} - ${txt}`);
+    }
+  } catch (err) {
+    console.warn(`[Collector Warning] Failed to send metrics to backend API (${err.message}). Attempting direct MongoDB storage fallback...`);
+    await saveToMongoDirectly(payload);
   }
 }
+
 
 /**
  * Main Poll Loop

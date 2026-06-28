@@ -24,12 +24,12 @@ const DUMMY_PREFIXES = ['web-server-', 'db-server-', 'cache-server-'];
 const isDummyServer = (serverId) => DUMMY_PREFIXES.some(prefix => serverId && serverId.startsWith(prefix));
 
 const seedInMemory = () => {
-  console.log('Initializing in-memory metrics database fallback (7 days)...');
+  console.log('Initializing in-memory metrics database fallback (7 weeks)...');
   const now = Date.now();
-  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  const sevenWeeksMs = 7 * 7 * 24 * 60 * 60 * 1000;
   const intervalMs = 30 * 60 * 1000; // 30 min intervals
   
-  for (let offset = sevenDaysMs; offset >= 0; offset -= intervalMs) {
+  for (let offset = sevenWeeksMs; offset >= 0; offset -= intervalMs) {
     const timestamp = new Date(now - offset);
     const hour = timestamp.getHours();
 
@@ -260,13 +260,13 @@ router.post('/', async (req, res) => {
     if (isMongoConnected()) {
       const existingCount = await ServerMetric.countDocuments({ serverId });
       if (existingCount === 0 && process.env.SEED_DUMMY_HISTORY === 'true') {
-        console.log(`[DB API] Seeding 7 days of history in MongoDB for new server: ${serverId}`);
+        console.log(`[DB API] Seeding 7 weeks of history in MongoDB for new server: ${serverId}`);
         const now = Date.now();
-        const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+        const sevenWeeksMs = 7 * 7 * 24 * 60 * 60 * 1000;
         const intervalMs = 30 * 60 * 1000; // 30 min intervals
         const serverMetricsToInsert = [];
         
-        for (let offset = sevenDaysMs; offset > 0; offset -= intervalMs) {
+        for (let offset = sevenWeeksMs; offset > 0; offset -= intervalMs) {
           const timestamp = new Date(now - offset);
           const hour = timestamp.getHours();
           let modifier = 1.0;
@@ -318,12 +318,12 @@ router.post('/', async (req, res) => {
     } else {
       const hasHistory = inMemoryMetrics.some(m => m.serverId === serverId);
       if (!hasHistory && process.env.SEED_DUMMY_HISTORY === 'true') {
-        console.log(`[In-Memory API] Seeding 7 days of history for new server: ${serverId}`);
+        console.log(`[In-Memory API] Seeding 7 weeks of history for new server: ${serverId}`);
         const now = Date.now();
-        const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+        const sevenWeeksMs = 7 * 7 * 24 * 60 * 60 * 1000;
         const intervalMs = 30 * 60 * 1000; // 30 min intervals
         
-        for (let offset = sevenDaysMs; offset > 0; offset -= intervalMs) {
+        for (let offset = sevenWeeksMs; offset > 0; offset -= intervalMs) {
           const timestamp = new Date(now - offset);
           const hour = timestamp.getHours();
           let modifier = 1.0;
@@ -676,11 +676,219 @@ router.get('/history-weekly', async (req, res) => {
   }
 });
 
+// 3.6. Get monthly cluster analytics (aggregated daily for 30 days)
+router.get('/history-monthly', async (req, res) => {
+  try {
+    if (isMongoConnected()) {
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const history = await ServerMetric.aggregate([
+        { 
+          $match: { 
+            serverId: { $not: /^(web-server-|db-server-|cache-server-)/ },
+            timestamp: { $gte: thirtyDaysAgo } 
+          } 
+        },
+        {
+          $project: {
+            serverId: 1,
+            serverName: 1,
+            cpuUsage: 1,
+            ramUsagePercent: '$ramUsage.usagePercent',
+            loadAverageOneMin: '$loadAverage.oneMin',
+            year: { $year: '$timestamp' },
+            month: { $month: '$timestamp' },
+            day: { $dayOfMonth: '$timestamp' }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              serverId: '$serverId',
+              year: '$year',
+              month: '$month',
+              day: '$day'
+            },
+            serverName: { $first: '$serverName' },
+            avgCpuUsage: { $avg: '$cpuUsage' },
+            maxRamUsagePercent: { $max: '$ramUsagePercent' },
+            avgLoad: { $avg: '$loadAverageOneMin' }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            serverId: '$_id.serverId',
+            year: '$_id.year',
+            month: '$_id.month',
+            day: '$_id.day',
+            serverName: 1,
+            avgCpuUsage: { $round: ['$avgCpuUsage', 1] },
+            maxRamUsagePercent: { $round: ['$maxRamUsagePercent', 1] },
+            avgLoad: { $round: ['$avgLoad', 2] }
+          }
+        },
+        { $sort: { year: 1, month: 1, day: 1 } }
+      ]);
+      return res.json(history);
+    } else {
+      // In-memory fallback
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      const recent = inMemoryMetrics.filter(m => !isDummyServer(m.serverId) && new Date(m.timestamp).getTime() >= thirtyDaysAgo);
+      
+      const dailyGroups = {};
+      recent.forEach(m => {
+        const d = new Date(m.timestamp);
+        const dateKey = `${m.serverId}-${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+        if (!dailyGroups[dateKey]) {
+          dailyGroups[dateKey] = {
+            serverId: m.serverId,
+            serverName: m.serverName,
+            year: d.getFullYear(),
+            month: d.getMonth() + 1,
+            day: d.getDate(),
+            cpus: [],
+            rams: [],
+            loads: []
+          };
+        }
+        dailyGroups[dateKey].cpus.push(m.cpuUsage);
+        dailyGroups[dateKey].rams.push(m.ramUsage.usagePercent);
+        dailyGroups[dateKey].loads.push(m.loadAverage.oneMin);
+      });
+
+      const list = Object.values(dailyGroups).map(group => {
+        const count = group.loads.length;
+        const sum = arr => arr.reduce((a, b) => a + b, 0);
+        const max = arr => Math.max(...arr);
+
+        return {
+          serverId: group.serverId,
+          serverName: group.serverName,
+          year: group.year,
+          month: group.month,
+          day: group.day,
+          avgCpuUsage: parseFloat((sum(group.cpus) / count).toFixed(1)),
+          maxRamUsagePercent: parseFloat(max(group.rams).toFixed(1)),
+          avgLoad: parseFloat((sum(group.loads) / count).toFixed(2))
+        };
+      }).sort((a, b) => {
+        return a.year - b.year || a.month - b.month || a.day - b.day;
+      });
+
+      return res.json(list);
+    }
+  } catch (error) {
+    console.error('Error fetching monthly history:', error);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// 3.7. Get weekly server analytics for single server (aggregated daily for 7 days)
+router.get('/server-history-weekly', async (req, res) => {
+  const { serverId } = req.query;
+  if (!serverId) {
+    return res.status(400).json({ error: 'Missing serverId parameter.' });
+  }
+  try {
+    if (isMongoConnected()) {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const history = await ServerMetric.aggregate([
+        { 
+          $match: { 
+            serverId: serverId,
+            timestamp: { $gte: sevenDaysAgo } 
+          } 
+        },
+        {
+          $project: {
+            cpuUsage: 1,
+            ramUsagePercent: '$ramUsage.usagePercent',
+            loadAverageOneMin: '$loadAverage.oneMin',
+            year: { $year: '$timestamp' },
+            month: { $month: '$timestamp' },
+            day: { $dayOfMonth: '$timestamp' }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              year: '$year',
+              month: '$month',
+              day: '$day'
+            },
+            avgCpuUsage: { $avg: '$cpuUsage' },
+            maxRamUsagePercent: { $max: '$ramUsagePercent' },
+            avgLoad: { $avg: '$loadAverageOneMin' }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            year: '$_id.year',
+            month: '$_id.month',
+            day: '$_id.day',
+            avgCpuUsage: { $round: ['$avgCpuUsage', 1] },
+            maxRamUsagePercent: { $round: ['$maxRamUsagePercent', 1] },
+            avgLoad: { $round: ['$avgLoad', 2] }
+          }
+        },
+        { $sort: { year: 1, month: 1, day: 1 } }
+      ]);
+      return res.json(history);
+    } else {
+      // In-memory fallback
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const recent = inMemoryMetrics.filter(m => m.serverId === serverId && new Date(m.timestamp).getTime() >= sevenDaysAgo);
+      
+      const dailyGroups = {};
+      recent.forEach(m => {
+        const d = new Date(m.timestamp);
+        const dateKey = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+        if (!dailyGroups[dateKey]) {
+          dailyGroups[dateKey] = {
+            year: d.getFullYear(),
+            month: d.getMonth() + 1,
+            day: d.getDate(),
+            cpus: [],
+            rams: [],
+            loads: []
+          };
+        }
+        dailyGroups[dateKey].cpus.push(m.cpuUsage);
+        dailyGroups[dateKey].rams.push(m.ramUsage.usagePercent);
+        dailyGroups[dateKey].loads.push(m.loadAverage.oneMin);
+      });
+
+      const list = Object.values(dailyGroups).map(group => {
+        const count = group.loads.length;
+        const sum = arr => arr.reduce((a, b) => a + b, 0);
+        const max = arr => Math.max(...arr);
+
+        return {
+          year: group.year,
+          month: group.month,
+          day: group.day,
+          avgCpuUsage: parseFloat((sum(group.cpus) / count).toFixed(1)),
+          maxRamUsagePercent: parseFloat(max(group.rams).toFixed(1)),
+          avgLoad: parseFloat((sum(group.loads) / count).toFixed(2))
+        };
+      }).sort((a, b) => {
+        return a.year - b.year || a.month - b.month || a.day - b.day;
+      });
+
+      return res.json(list);
+    }
+  } catch (error) {
+    console.error('Error fetching server weekly history:', error);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
 // 3.8. Get combustion summary for all servers (counts, 24h peaks, 7d peaks above 80%)
 router.get('/combustion-summary', async (req, res) => {
   try {
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const sevenWeeksAgo = new Date(Date.now() - 7 * 7 * 24 * 60 * 60 * 1000);
 
     const computeSummaryPayload = (serverSummaries) => {
       let current80Count = 0;
@@ -775,9 +983,9 @@ router.get('/combustion-summary', async (req, res) => {
         }
       ]);
 
-      // 3. Max metrics in last 7d per server
+      // 3. Max metrics in last 7w (49 days) per server
       const metrics7d = await ServerMetric.aggregate([
-        { $match: { timestamp: { $gte: sevenDaysAgo } } },
+        { $match: { timestamp: { $gte: sevenWeeksAgo } } },
         {
           $group: {
             _id: '$serverId',
@@ -828,7 +1036,7 @@ router.get('/combustion-summary', async (req, res) => {
       // In-Memory Fallback
       const nowTime = Date.now();
       const m24hList = inMemoryMetrics.filter(m => !isDummyServer(m.serverId) && new Date(m.timestamp).getTime() >= (nowTime - 24 * 60 * 60 * 1000));
-      const m7dList = inMemoryMetrics.filter(m => !isDummyServer(m.serverId) && new Date(m.timestamp).getTime() >= (nowTime - 7 * 24 * 60 * 60 * 1000));
+      const m7dList = inMemoryMetrics.filter(m => !isDummyServer(m.serverId) && new Date(m.timestamp).getTime() >= (nowTime - 7 * 7 * 24 * 60 * 60 * 1000));
 
       const serverSummariesMap = {};
 

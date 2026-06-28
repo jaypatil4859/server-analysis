@@ -1,19 +1,19 @@
 version: '3.8'
 
-services:
-  # MongoDB Database Service
-  database:
-    image: mongo:7.0
-    container_name: server-analysis-db
-    restart: unless-stopped
-    ports:
-      - "27017:27017" # Exposes DB for external check or direct access
-    environment:
-      - MONGO_INITDB_DATABASE=server_analysis
-    volumes:
-      - mongodb_data:/data/db
+# ─────────────────────────────────────────────────────────────────────────────
+# Server Analysis Analytics — Docker Compose Stack
+#
+# Uses the REMOTE production MongoDB at 217.145.69.228 (no local DB container).
+# Data source: Nagios Bridge (polls Nagios every 30s)
+#
+# Quick start:
+#   1. Copy .env.example to .env and fill in NAGIOS_PASS and MONGODB_URI
+#   2. docker compose up -d --build
+# ─────────────────────────────────────────────────────────────────────────────
 
-  # Node Express Backend API Service
+services:
+
+  # ─── Node Express Backend API ──────────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -21,13 +21,12 @@ services:
     restart: unless-stopped
     ports:
       - "3971:3971"
-    depends_on:
-      - database
     environment:
       - PORT=3971
-      # Connects to database service hostname defined in this docker-compose
-      - MONGODB_URI=${MONGODB_URI:-mongodb://database:27017/server_analysis}
-      # Notification integrations (configured via .env in root if needed)
+      # Remote production MongoDB (set in .env or override here)
+      - MONGODB_URI=${MONGODB_URI:-mongodb://admin:dMY8Rp0(K9S7Hy@217.145.69.228:27017/server_analysis?authSource=admin}
+      - SEED_DUMMY_HISTORY=false
+      # Optional notification integrations
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_PORT=${SMTP_PORT}
       - SMTP_USER=${SMTP_USER}
@@ -36,41 +35,54 @@ services:
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
 
-  # Nginx Frontend Web Service
+  # ─── React/Vite Frontend (Nginx) ────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
     container_name: server-analysis-frontend
     restart: unless-stopped
     ports:
-      - "3970:80" # Exposed HTTP port on the host
+      - "3970:80"
     depends_on:
       - backend
 
-  # Centralized SSH Real-Time Collector
-  collector:
-    image: node:18-alpine
-    container_name: server-analysis-collector
+  # ─── Nagios Bridge (Primary Data Collector) ─────────────────────────────────
+  # Polls Nagios statusjson.cgi every 30 seconds and forwards real server metrics
+  # (CPU, RAM, Load) to the backend API.
+  nagios-bridge:
+    image: node:20-alpine
+    container_name: server-analysis-nagios-bridge
     restart: unless-stopped
     working_dir: /usr/src/app
     volumes:
       - .:/usr/src/app
-      # Mount the SSH private key from the host into the container (change path as needed)
-      - ${SSH_KEY_PATH:-/home/devops/.ssh/id_rsa}:/root/.ssh/id_rsa:ro
     depends_on:
       - backend
     environment:
+      - NAGIOS_URL=${NAGIOS_URL:-http://217.145.69.228/nagios}
+      - NAGIOS_USER=${NAGIOS_USER:-nagiosadmin}
+      - NAGIOS_PASS=${NAGIOS_PASS}
       - METRICS_API_URL=http://backend:3971/api/metrics
-      - POLL_INTERVAL_MS=10000 # Real-time poll interval (10 seconds)
-      - SSH_USER=${SSH_USER:-root}
-      - SSH_KEY_PATH=/root/.ssh/id_rsa_temp
+      - POLL_INTERVAL_MS=30000
+      # MongoDB fallback URI (used if backend is temporarily unreachable)
+      - MONGODB_URI=${MONGODB_URI:-mongodb://admin:dMY8Rp0(K9S7Hy@217.145.69.228:27017/server_analysis?authSource=admin}
     command: >
-      sh -c "mkdir -p /root/.ssh && 
-             chmod 700 /root/.ssh && 
-             cp /root/.ssh/id_rsa /root/.ssh/id_rsa_temp && 
-             chmod 600 /root/.ssh/id_rsa_temp && 
-             node ssh-collector.js"
+      sh -c "cd /usr/src/app &&
+             npm install --prefix backend --only=production 2>/dev/null || true &&
+             node nagios-bridge.js"
 
-volumes:
-  mongodb_data:
-    driver: local
+# ─── NOTE: Local MongoDB removed ─────────────────────────────────────────────
+# The production MongoDB is hosted externally at 217.145.69.228.
+# There is no need for a local database container.
+# If you want a fully local test environment, add:
+#
+#   database:
+#     image: mongo:7.0
+#     container_name: server-analysis-db
+#     restart: unless-stopped
+#     ports:
+#       - "27017:27017"
+#     volumes:
+#       - mongodb_data:/data/db
+#
+# And change MONGODB_URI to: mongodb://database:27017/server_analysis

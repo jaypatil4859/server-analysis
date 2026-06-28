@@ -11,171 +11,15 @@ import {
   CartesianGrid, Tooltip, Legend, BarChart, Bar, AreaChart, Area 
 } from 'recharts';
 
-const API_HOST = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? `${window.location.protocol}//${window.location.hostname}:3971` : `${window.location.origin}/monitoring-apis`);
-const API_BASE = `${API_HOST}/api/metrics`;
-const LAPTOP_API_BASE = `${API_HOST}/api/laptop`;
+// API_HOST: Use VITE_API_URL env var if set, otherwise fall back to the /monitoring-apis
+// nginx proxy path (works in both dev via Vite proxy and production via Nginx).
+let API_HOST = import.meta.env.VITE_API_URL || `${window.location.origin}/monitoring-apis`;
+const getApiBase = () => `${API_HOST}/api/metrics`;
+const getLaptopApiBase = () => `${API_HOST}/api/laptop`;
 
-// Production ready mock server data (13 servers)
-const MOCK_SERVERS = [
-  { serverId: 'web-server-01', serverName: 'Web Server 01', cpuUsage: 42.5, ramUsage: { totalBytes: 17179869184, usedBytes: 7730941132, usagePercent: 45.0 }, diskUsage: { totalBytes: 268435456000, usedBytes: 139586437120, usagePercent: 52.0 }, loadAverage: { oneMin: 1.45, fiveMin: 1.20, fifteenMin: 0.95 }, timestamp: new Date().toISOString() },
-  { serverId: 'web-server-02', serverName: 'Web Server 02', cpuUsage: 92.1, ramUsage: { totalBytes: 17179869184, usedBytes: 15810537062, usagePercent: 92.0 }, diskUsage: { totalBytes: 268435456000, usedBytes: 209379655680, usagePercent: 78.0 }, loadAverage: { oneMin: 4.12, fiveMin: 3.80, fifteenMin: 3.50 }, timestamp: new Date().toISOString() }, // Overloaded
-  { serverId: 'web-server-03', serverName: 'Web Server 03', cpuUsage: 28.4, ramUsage: { totalBytes: 17179869184, usedBytes: 6871947673, usagePercent: 40.0 }, diskUsage: { totalBytes: 268435456000, usedBytes: 120795955200, usagePercent: 45.0 }, loadAverage: { oneMin: 0.85, fiveMin: 0.90, fifteenMin: 0.95 }, timestamp: new Date().toISOString() },
-  { serverId: 'web-server-04', serverName: 'Web Server 04', cpuUsage: 35.2, ramUsage: { totalBytes: 17179869184, usedBytes: 8589934592, usagePercent: 50.0 }, diskUsage: { totalBytes: 268435456000, usedBytes: 163745628160, usagePercent: 61.0 }, loadAverage: { oneMin: 1.10, fiveMin: 1.05, fifteenMin: 1.00 }, timestamp: new Date().toISOString() },
-  { serverId: 'web-server-05', serverName: 'Web Server 05', cpuUsage: 12.5, ramUsage: { totalBytes: 8589934592, usedBytes: 3006477107, usagePercent: 35.0 }, diskUsage: { totalBytes: 268435456000, usedBytes: 102005473280, usagePercent: 38.0 }, loadAverage: { oneMin: 0.40, fiveMin: 0.45, fifteenMin: 0.50 }, timestamp: new Date().toISOString() },
-  { serverId: 'web-server-06', serverName: 'Web Server 06', cpuUsage: 19.8, ramUsage: { totalBytes: 8589934592, usedBytes: 3435973836, usagePercent: 40.0 }, diskUsage: { totalBytes: 268435456000, usedBytes: 128849018880, usagePercent: 48.0 }, loadAverage: { oneMin: 0.60, fiveMin: 0.65, fifteenMin: 0.70 }, timestamp: new Date().toISOString() },
-  { serverId: 'web-server-07', serverName: 'Web Server 07', cpuUsage: 55.4, ramUsage: { totalBytes: 17179869184, usedBytes: 10307921510, usagePercent: 60.0 }, diskUsage: { totalBytes: 268435456000, usedBytes: 171798691840, usagePercent: 64.0 }, loadAverage: { oneMin: 2.10, fiveMin: 1.85, fifteenMin: 1.70 }, timestamp: new Date().toISOString() },
-  { serverId: 'web-server-08', serverName: 'Web Server 08', cpuUsage: 94.6, ramUsage: { totalBytes: 17179869184, usedBytes: 8589934592, usagePercent: 50.0 }, diskUsage: { totalBytes: 268435456000, usedBytes: 193273528320, usagePercent: 72.0 }, loadAverage: { oneMin: 3.50, fiveMin: 3.20, fifteenMin: 3.00 }, timestamp: new Date().toISOString() }, // Overloaded CPU
-  { serverId: 'db-server-01', serverName: 'Database Server 01', cpuUsage: 68.2, ramUsage: { totalBytes: 34359738368, usedBytes: 25769803776, usagePercent: 75.0 }, diskUsage: { totalBytes: 536870912000, usedBytes: 365072220160, usagePercent: 68.0 }, loadAverage: { oneMin: 3.10, fiveMin: 2.80, fifteenMin: 2.50 }, timestamp: new Date().toISOString() },
-  { serverId: 'db-server-02', serverName: 'Database Server 02', cpuUsage: 88.5, ramUsage: { totalBytes: 68719476736, usedBytes: 62534723829, usagePercent: 91.0 }, diskUsage: { totalBytes: 536870912000, usedBytes: 477815111680, usagePercent: 89.0 }, loadAverage: { oneMin: 6.20, fiveMin: 5.80, fifteenMin: 5.50 }, timestamp: new Date().toISOString() }, // Overloaded RAM
-  { serverId: 'db-server-03', serverName: 'Database Server 03', cpuUsage: 45.1, ramUsage: { totalBytes: 34359738368, usedBytes: 18897856102, usagePercent: 55.0 }, diskUsage: { totalBytes: 536870912000, usedBytes: 397284474880, usagePercent: 74.0 }, loadAverage: { oneMin: 1.80, fiveMin: 1.95, fifteenMin: 2.10 }, timestamp: new Date().toISOString() },
-  { serverId: 'cache-server-01', serverName: 'Redis Cache 01', cpuUsage: 12.1, ramUsage: { totalBytes: 8589934592, usedBytes: 2405181685, usagePercent: 28.0 }, diskUsage: { totalBytes: 268435456000, usedBytes: 85899345920, usagePercent: 32.0 }, loadAverage: { oneMin: 0.25, fiveMin: 0.30, fifteenMin: 0.35 }, timestamp: new Date().toISOString() },
-  { serverId: 'cache-server-02', serverName: 'Redis Cache 02', cpuUsage: 15.3, ramUsage: { totalBytes: 17179869184, usedBytes: 5153960755, usagePercent: 30.0 }, diskUsage: { totalBytes: 268435456000, usedBytes: 93952409600, usagePercent: 35.0 }, loadAverage: { oneMin: 0.35, fiveMin: 0.40, fifteenMin: 0.45 }, timestamp: new Date().toISOString() }
-];
+// REMOVED: All MOCK_SERVERS constants were here (lines 19-116).
+// The app now requires a live backend connection.
 
-// Production ready mock laptop data
-const MOCK_LAPTOP = {
-  laptopId: 'sahil-laptop',
-  laptopName: 'ZenBook Pro UX',
-  cpuUsage: 16.4,
-  ramUsage: { totalBytes: 17179869184, usedBytes: 7730941132, usagePercent: 45.0 },
-  battery: { percent: 82, status: 'Discharging', isCharging: false },
-  thermals: { cpuTemp: 48.5 },
-  wifi: { ssid: 'Office-Enterprise', signalStrength: 85 },
-  screenTimeToday: 320,
-  appUsage: [
-    { name: 'VS Code', durationPercent: 45 },
-    { name: 'Chrome', durationPercent: 30 },
-    { name: 'Terminal', durationPercent: 13 },
-    { name: 'Slack', durationPercent: 7 },
-    { name: 'Spotify', durationPercent: 5 }
-  ],
-  activityIndex: 45,
-  timestamp: new Date().toISOString()
-};
-
-const generateMockRamHistory = () => {
-  const data = [];
-  const now = new Date();
-  for (let i = 24; i >= 0; i--) {
-    const time = new Date(now.getTime() - i * 60 * 60 * 1000);
-    const hour = time.getHours();
-    const timeLabel = `${hour}:00`;
-    const hourFactor = (hour >= 14 && hour <= 20) ? 1.5 : (hour >= 1 && hour <= 5) ? 0.6 : 1.0;
-    
-    const record = { timeLabel };
-    MOCK_SERVERS.forEach(server => {
-      const base = server.serverId.includes('db') ? 70 : server.serverId.includes('cache') ? 25 : 40;
-      const multiplier = server.serverId.includes('db') ? 4 : server.serverId.includes('cache') ? 2 : 5;
-      let val = base + hourFactor * multiplier + Math.random() * 6;
-      if (server.serverId === 'web-server-02') val = Math.min(99, val + 25);
-      if (server.serverId === 'db-server-02') val = Math.min(99, val + 15);
-      record[server.serverName] = parseFloat(val.toFixed(1));
-    });
-    data.push(record);
-  }
-  return data;
-};
-
-const generateMockPeakAnalysis = () => {
-  const data = [];
-  for (let hour = 0; hour < 24; hour++) {
-    const hourFactor = (hour >= 14 && hour <= 20) ? 1.8 : (hour >= 1 && hour <= 5) ? 0.5 : 1.0;
-    data.push({
-      hour,
-      timeLabel: `${hour.toString().padStart(2, '0')}:00`,
-      avgLoad: parseFloat((0.8 * hourFactor + Math.random() * 0.2).toFixed(2)),
-      maxLoad: parseFloat((1.5 * hourFactor + Math.random() * 0.4).toFixed(2)),
-      avgCpuUsage: parseFloat((25 * hourFactor + Math.random() * 5).toFixed(1)),
-      maxCpuUsage: parseFloat((45 * hourFactor + Math.random() * 8).toFixed(1))
-    });
-  }
-  return data;
-};
-
-const generateMockWeeklyHistory = () => {
-  const data = [];
-  const now = new Date();
-  for (let i = 6; i >= 0; i--) {
-    const time = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-    const dateLabel = time.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-    
-    const record = { dateLabel };
-    MOCK_SERVERS.forEach(server => {
-      const base = server.serverId.includes('db') ? 75 : server.serverId.includes('cache') ? 28 : 45;
-      let val = base + Math.random() * 10;
-      if (server.serverId === 'web-server-02') val = Math.min(99, val + 20);
-      if (server.serverId === 'db-server-02') val = Math.min(99, val + 10);
-      record[server.serverName] = parseFloat(val.toFixed(1));
-    });
-    data.push(record);
-  }
-  return data;
-};
-
-const generateMockSingleServerHistory = (serverId) => {
-  const data = [];
-  const now = new Date();
-  const server = MOCK_SERVERS.find(s => s.serverId === serverId) || MOCK_SERVERS[0];
-  for (let i = 24; i >= 0; i--) {
-    const time = new Date(now.getTime() - i * 60 * 60 * 1000);
-    const hour = time.getHours();
-    const timeLabel = `${hour.toString().padStart(2, '0')}:00`;
-    const hourFactor = (hour >= 14 && hour <= 20) ? 1.4 : (hour >= 1 && hour <= 5) ? 0.6 : 1.0;
-    
-    let baseCpu = server.cpuUsage;
-    let baseRam = server.ramUsage.usagePercent;
-    
-    data.push({
-      timeLabel,
-      cpuUsage: parseFloat(Math.min(98, Math.max(2, baseCpu * hourFactor + (Math.random() * 12 - 6))).toFixed(1)),
-      ramUsage: parseFloat(Math.min(98, Math.max(10, baseRam * (0.95 + hourFactor * 0.05) + (Math.random() * 4 - 2))).toFixed(1)),
-      loadAverage: parseFloat(Math.max(0.1, (baseCpu / 40) * hourFactor + (Math.random() * 0.4 - 0.2)).toFixed(2))
-    });
-  }
-  return data;
-};
-
-const generateMockLaptopHistory = () => {
-  const data = [];
-  const now = new Date();
-  for (let i = 24; i >= 0; i--) {
-    const time = new Date(now.getTime() - i * 60 * 60 * 1000);
-    const hour = time.getHours();
-    const timeLabel = `${hour.toString().padStart(2, '0')}:00`;
-
-    let batteryPercent = 100;
-    if (hour >= 8 && hour < 13) {
-      batteryPercent = Math.round(100 - ((hour - 8) / 5) * 85);
-    } else if (hour >= 13 && hour < 16) {
-      batteryPercent = Math.round(15 + ((hour - 13) / 3) * 85);
-    } else if (hour >= 16 && hour < 20) {
-      batteryPercent = Math.round(100 - ((hour - 16) / 4) * 65);
-    } else if (hour >= 20) {
-      batteryPercent = Math.round(35 + ((hour - 20) / 4) * 65);
-    }
-
-    let actFactor = 0.2;
-    if (hour >= 9 && hour < 12) actFactor = 1.2;
-    else if (hour >= 12 && hour < 14) actFactor = 0.4;
-    else if (hour >= 14 && hour < 18) actFactor = 1.4;
-    else if (hour >= 18 && hour < 22) actFactor = 0.8;
-
-    const cpu = parseFloat((15 * actFactor + Math.random() * 10).toFixed(1));
-    const ram = parseFloat((45 + cpu * 0.2 + Math.random() * 2).toFixed(1));
-    const temp = parseFloat(((actFactor > 0.5 ? 48 : 40) + cpu * 0.35 + Math.random() * 3).toFixed(1));
-    const activityIndex = Math.round((actFactor * 50) + Math.random() * 15);
-
-    data.push({
-      timeLabel,
-      avgBatteryPercent: batteryPercent,
-      avgCpuUsage: cpu,
-      avgRamUsagePercent: ram,
-      avgCpuTemp: temp,
-      avgActivityIndex: activityIndex
-    });
-  }
-  return data;
-};
 
 export default function App() {
   const [viewMode, setViewMode] = useState('servers'); // 'servers' | 'laptop'
@@ -183,6 +27,7 @@ export default function App() {
   const [ramHistory, setRamHistory] = useState([]);
   const [peakAnalysis, setPeakAnalysis] = useState([]);
   const [weeklyHistory, setWeeklyHistory] = useState([]);
+  const [monthlyHistory, setMonthlyHistory] = useState([]);
   const [weeklyMetricTab, setWeeklyMetricTab] = useState('ram'); // 'ram' | 'cpu' | 'load'
   const [activeTab, setActiveTab] = useState('ram'); // 'ram' | 'load-peaks' | 'weekly'
   const [combustionData, setCombustionData] = useState({
@@ -209,6 +54,7 @@ export default function App() {
   const [chartViewMode, setChartViewMode] = useState('cluster'); // 'cluster' | 'single'
   const [selectedServerId, setSelectedServerId] = useState('');
   const [singleServerHistory, setSingleServerHistory] = useState([]);
+  const [singleServerTimeframe, setSingleServerTimeframe] = useState('24h'); // '24h' | '7d'
 
   // Laptop specific state
   const [laptops, setLaptops] = useState([]);
@@ -218,7 +64,7 @@ export default function App() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [isMockData, setIsMockData] = useState(false);
+  // isMockData removed — app uses real backend only
   const [lastUpdated, setLastUpdated] = useState(new Date());
 
   const processRamHistory = (rawData) => {
@@ -321,14 +167,11 @@ export default function App() {
 
   const clearAlerts = async () => {
     try {
-      if (isMockData) {
-        setAlerts([]);
-      } else {
-        await fetch(`${API_BASE}/alerts/clear`, { method: 'POST' });
-        setAlerts([]);
-      }
+      await fetch(`${getApiBase()}/alerts/clear`, { method: 'POST' });
+      setAlerts([]);
     } catch (err) {
       console.error('Failed to clear alerts:', err);
+      setAlerts([]);
     }
   };
 
@@ -336,25 +179,28 @@ export default function App() {
     if (!isSilent) setLoading(true);
     setError(null);
     try {
-      // Test backend connection
+      // Test backend connection via health endpoint
       const healthRes = await fetch(`${API_HOST}/health`).catch(() => null);
-      
       if (!healthRes || !healthRes.ok) {
-        throw new Error('Backend not reachable');
+        const data = healthRes ? await healthRes.json().catch(() => null) : null;
+        if (!data || data.status !== 'healthy') {
+          throw new Error('Backend not reachable. Make sure the backend is running and accessible.');
+        }
       }
 
       // Fetch Server metrics & Alerts
-      const [serversRes, ramRes, peakRes, alertsRes, weeklyRes, combustionRes] = await Promise.all([
-        fetch(`${API_BASE}/current`),
-        fetch(`${API_BASE}/ram-history-24h`),
-        fetch(`${API_BASE}/peak-analysis`),
-        fetch(`${API_BASE}/alerts`).catch(() => null),
-        fetch(`${API_BASE}/history-weekly`).catch(() => null),
-        fetch(`${API_BASE}/combustion-summary`).catch(() => null)
+      const [serversRes, ramRes, peakRes, alertsRes, weeklyRes, monthlyRes, combustionRes] = await Promise.all([
+        fetch(`${getApiBase()}/current`),
+        fetch(`${getApiBase()}/ram-history-24h`),
+        fetch(`${getApiBase()}/peak-analysis`),
+        fetch(`${getApiBase()}/alerts`).catch(() => null),
+        fetch(`${getApiBase()}/history-weekly`).catch(() => null),
+        fetch(`${getApiBase()}/history-monthly`).catch(() => null),
+        fetch(`${getApiBase()}/combustion-summary`).catch(() => null)
       ]);
 
       // Fetch Laptop current list
-      const laptopsRes = await fetch(`${LAPTOP_API_BASE}/current`).catch(() => null);
+      const laptopsRes = await fetch(`${getLaptopApiBase()}/current`).catch(() => null);
 
       if (!serversRes.ok || !ramRes.ok || !peakRes.ok) {
         throw new Error('API server returned error status');
@@ -365,6 +211,7 @@ export default function App() {
       const peakData = await peakRes.json();
       const alertsData = alertsRes && alertsRes.ok ? await alertsRes.json() : [];
       const weeklyData = weeklyRes && weeklyRes.ok ? await weeklyRes.json() : [];
+      const monthlyData = monthlyRes && monthlyRes.ok ? await monthlyRes.json() : [];
       const combustionDataRes = combustionRes && combustionRes.ok ? await combustionRes.json() : null;
 
       let activeServerId = selectedServerId;
@@ -413,10 +260,14 @@ export default function App() {
         } else {
           setWeeklyHistory([]);
         }
+        if (monthlyData && monthlyData.length > 0) {
+          setMonthlyHistory(processWeeklyHistory(monthlyData));
+        } else {
+          setMonthlyHistory([]);
+        }
         if (combustionDataRes) {
           setCombustionData(combustionDataRes);
         }
-        setIsMockData(false);
       }
 
       // Handle single server history
@@ -424,9 +275,26 @@ export default function App() {
         if (serversData.length === 0 || !activeServerId) {
           setSingleServerHistory([]);
         } else {
-          const sHistoryRes = await fetch(`${API_BASE}/server-history-24h?serverId=${activeServerId}`).catch(() => null);
+          const endpoint = singleServerTimeframe === '24h' ? 'server-history-24h' : 'server-history-weekly';
+          const sHistoryRes = await fetch(`${getApiBase()}/${endpoint}?serverId=${activeServerId}`).catch(() => null);
           if (sHistoryRes && sHistoryRes.ok) {
-            setSingleServerHistory(await sHistoryRes.json());
+            const data = await sHistoryRes.json();
+            if (singleServerTimeframe === '7d') {
+              const formatted = data.map(item => {
+                const d = new Date(item.year, item.month - 1, item.day);
+                const dateLabel = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+                return {
+                  ...item,
+                  timeLabel: dateLabel,
+                  cpuUsage: item.avgCpuUsage,
+                  ramUsage: item.maxRamUsagePercent,
+                  loadAverage: item.avgLoad
+                };
+              });
+              setSingleServerHistory(formatted);
+            } else {
+              setSingleServerHistory(data);
+            }
           } else {
             setSingleServerHistory([]);
           }
@@ -454,7 +322,7 @@ export default function App() {
 
       if (activeId) {
         // Query history for the active laptop specifically
-        const laptopHistRes = await fetch(`${LAPTOP_API_BASE}/history-24h?laptopId=${activeId}`).catch(() => null);
+        const laptopHistRes = await fetch(`${getLaptopApiBase()}/history-24h?laptopId=${activeId}`).catch(() => null);
 
         if (laptopHistRes && laptopHistRes.ok) {
           const laptopHistData = await laptopHistRes.json();
@@ -478,7 +346,6 @@ export default function App() {
       setPeakAnalysis([]);
       setWeeklyHistory([]);
       setAlerts([]);
-      setIsMockData(false);
       setLaptops([]);
       setLaptopHistory([]);
       setCombustionData({
@@ -497,7 +364,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [selectedLaptopId, chartViewMode, selectedServerId]);
+  }, [selectedLaptopId, chartViewMode, selectedServerId, singleServerTimeframe]);
 
   useEffect(() => {
     fetchData();
@@ -562,7 +429,7 @@ export default function App() {
   ];
 
   // Default Laptop
-  const activeLaptop = laptops.find(l => l.laptopId === selectedLaptopId) || laptops[0] || MOCK_LAPTOP;
+  const activeLaptop = laptops.find(l => l.laptopId === selectedLaptopId) || laptops[0] || null;
 
   // Active Critical Alerts Filter
   const activeCriticalAlerts = alerts.filter(a => !a.resolved);
@@ -675,12 +542,7 @@ export default function App() {
             )}
           </div>
 
-          {isMockData && (
-            <div className="status-badge" style={{ color: 'var(--danger-color)', borderColor: 'rgba(184, 113, 88, 0.2)' }}>
-              <AlertTriangle size={12} style={{ color: 'var(--danger-color)' }} />
-              <span style={{ marginLeft: '4px' }}>Demo Mode</span>
-            </div>
-          )}
+
           <div className="status-badge">
             <div className="status-indicator pulsing"></div>
             <span style={{ marginLeft: '4px' }}>System Online</span>
@@ -781,7 +643,7 @@ export default function App() {
                   <span className="insight-lbl" style={{ display: 'block', marginBottom: '8px', textAlign: 'left' }}>Collector Startup Commands:</span>
                   <div className="code-block" style={{ textAlign: 'left', margin: 0 }}>
                     # Download & run the collector agent<br />
-                    METRICS_API_URL={window.location.origin}/monitoring-apis/api/metrics \<br />
+                    METRICS_API_URL={getApiBase()} \<br />
                     SERVER_ID=prod-web-01 SERVER_NAME="Web Server 01" \<br />
                     node collector.js
                   </div>
@@ -974,6 +836,12 @@ export default function App() {
                     >
                       Weekly Trends (7d)
                     </button>
+                    <button 
+                      className={`chart-tab-btn ${activeTab === 'monthly' ? 'active' : ''}`}
+                      onClick={() => setActiveTab('monthly')}
+                    >
+                      Monthly Trends (30d)
+                    </button>
                   </div>
                 ) : (
                   <div className="chart-tabs" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '2px 8px' }}>
@@ -1014,11 +882,27 @@ export default function App() {
                         </option>
                       ))}
                     </select>
+                    <div style={{ display: 'flex', gap: '4px', marginLeft: '12px' }}>
+                      <button 
+                        className={`chart-tab-btn ${singleServerTimeframe === '24h' ? 'active' : ''}`}
+                        onClick={() => setSingleServerTimeframe('24h')}
+                        style={{ fontSize: '10px', padding: '4px 8px', borderRadius: '4px' }}
+                      >
+                        24 Hours
+                      </button>
+                      <button 
+                        className={`chart-tab-btn ${singleServerTimeframe === '7d' ? 'active' : ''}`}
+                        onClick={() => setSingleServerTimeframe('7d')}
+                        style={{ fontSize: '10px', padding: '4px 8px', borderRadius: '4px' }}
+                      >
+                        1 Week
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
 
-              {activeTab === 'weekly' && chartViewMode === 'cluster' && (
+              {(activeTab === 'weekly' || activeTab === 'monthly') && chartViewMode === 'cluster' && (
                 <div className="weekly-sub-tabs" style={{ display: 'flex', gap: '8px', padding: '0 24px', justifyContent: 'flex-start' }}>
                   <button 
                     className={`chart-tab-btn ${weeklyMetricTab === 'ram' ? 'active' : ''}`}
@@ -1125,7 +1009,7 @@ export default function App() {
                     </ResponsiveContainer>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={weeklyHistory} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                      <LineChart data={activeTab === 'monthly' ? monthlyHistory : weeklyHistory} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.02)" />
                         <XAxis dataKey="dateLabel" stroke="var(--text-secondary)" tickLine={false} axisLine={false} tick={{ fontSize: 10, fontFamily: 'var(--font-sans)' }} />
                         <YAxis 
@@ -1247,7 +1131,7 @@ export default function App() {
                 textAlign: 'left'
               }}>
                 <h3 style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--luxury-gold)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
-                  <TrendingUp size={12} /> 1-Week Fleet Summary
+                  <TrendingUp size={12} /> 7-Week Fleet Summary
                 </h3>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '12px' }}>
                   <div>
@@ -1355,9 +1239,7 @@ export default function App() {
                     </div>
                     <span className="stat-item-name">Data Storage Mode</span>
                   </div>
-                  <span className="stat-item-val">
-                    {isMockData ? '24h Simulation' : 'Active MongoDB logs'}
-                  </span>
+                  <span className="stat-item-val">Active MongoDB logs</span>
                 </div>
               </div>
 
@@ -1398,7 +1280,7 @@ export default function App() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '6px' }}>
                       <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Live: <strong>{combustionData.counts.current80Count}</strong></span>
                       <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>24h: <strong>{combustionData.counts.peak24h80Count}</strong></span>
-                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>7d: <strong>{combustionData.counts.peak7d80Count}</strong></span>
+                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>7w: <strong>{combustionData.counts.peak7d80Count}</strong></span>
                     </div>
                   </div>
                   
@@ -1407,7 +1289,7 @@ export default function App() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '6px' }}>
                       <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Live: <strong>{combustionData.counts.current90Count}</strong></span>
                       <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>24h: <strong>{combustionData.counts.peak24h90Count}</strong></span>
-                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>7d: <strong>{combustionData.counts.peak7d90Count}</strong></span>
+                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>7w: <strong>{combustionData.counts.peak7d90Count}</strong></span>
                     </div>
                   </div>
                 </div>
@@ -1444,10 +1326,10 @@ export default function App() {
                 {/* 7 Day Peaks */}
                 <div>
                   <h3 style={{ fontSize: '12px', fontWeight: '500', textTransform: 'uppercase', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px', borderBottom: '1px solid rgba(0,0,0,0.04)', paddingBottom: '8px', marginBottom: '12px' }}>
-                    <Calendar size={13} style={{ color: 'var(--luxury-gold)' }} /> Exceeded 80% in Past 7 Days
+                    <Calendar size={13} style={{ color: 'var(--luxury-gold)' }} /> Exceeded 80% in Past 7 Weeks
                   </h3>
                   {combustionData.above80in7d.length === 0 ? (
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '16px 0' }}>No servers exceeded 80% in the past 7 days.</div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '16px 0' }}>No servers exceeded 80% in the past 7 weeks.</div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {combustionData.above80in7d.map(item => (
@@ -1527,7 +1409,7 @@ export default function App() {
               >
                 {laptops.map(l => (
                   <option key={l.laptopId} value={l.laptopId}>
-                    {l.laptopName} ({l.laptopId === 'sahil-laptop' ? 'Simulated Demo' : 'Real-time Local'})
+                    {l.laptopName}
                   </option>
                 ))}
               </select>

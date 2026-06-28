@@ -8,6 +8,7 @@ export default defineConfig({
   server: {
     port: 3970,
     host: true,
+    allowedHosts: true,
     proxy: {
       '/monitoring-apis': {
         target: 'http://localhost:3971',
@@ -20,6 +21,7 @@ export default defineConfig({
     port: 3970,
     host: true,
     strictPort: true,
+    allowedHosts: true,
     proxy: {
       '/monitoring-apis': {
         target: 'http://localhost:3971',

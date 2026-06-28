@@ -1,158 +1,166 @@
-# Server Analysis Analytics — Production Handover & Deployment Guide
+# Server Analysis Analytics — Deployment Guide
 
-> **For DevOps Engineers** — This step-by-step guide explains how to deploy, configure, and manage Server Analysis Analytics on your server using PM2 + Nginx (Native VM) or Docker Compose.
+> **For DevOps Engineers** — Three deployment methods, from simplest to most flexible.
 
 ---
 
-## Method A: Native VM Deployment (PM2 + Nginx)
+## ⚡ Method A: One-Command Deploy (Fastest — Recommended)
 
-Follow these steps to run the Vite frontend and Node backend on PM2 behind your server's Nginx proxy.
+This is the easiest way. After cloning, run a single script that installs, builds, and launches everything.
 
-### Step 1: Install Node.js and PM2 on Ubuntu
-Update the system package list and install system utilities:
-```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl rsync git
-```
-Install Node.js 20 from NodeSource:
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-```
-Install PM2 globally for process management:
-```bash
-sudo npm install -g pm2
-```
-Verify the installation:
-```bash
-node -v
-npm -v
-pm2 -v
-```
+### Prerequisites
+- Ubuntu 20.04+ or any Linux server
+- Node.js 20.x and npm ([install guide](https://nodejs.org/en/download))
+- Git
 
-### Step 2: Configure Environment Variables
-Navigate to your project directory:
-```bash
-cd /var/dev/server-analysis
-```
-Create a backend environment configuration file:
-```bash
-nano backend/.env
-```
-Paste and save the following production variables:
-```env
-PORT=3971
-MONGODB_URI=mongodb://admin:dMY8Rp0(K9S7Hy@217.145.69.228:27017/server_analysis?authSource=admin
+### Steps
 
-# --- SSH Target Probing ---
-SSH_USER=root
-SSH_KEY_PATH=/root/.ssh/id_rsa
-
-# --- Nagios Fallback Bridge ---
-NAGIOS_URL=http://217.145.69.228/nagios
-NAGIOS_USER=nagiosadmin
-NAGIOS_PASS=4z1lO3lXxNa$
-
-# --- DB Seeding Toggle ---
-# Set to 'true' to generate 7-day simulated logs on first connect, or omit/set to 'false' to show only real metrics
-SEED_DUMMY_HISTORY=false
-```
-
-### Step 3: Generate a Production Build for React-Vite Frontend
-Navigate to the frontend directory and install dependencies:
+**1. Clone the repository:**
 ```bash
-cd /var/www/server-analysis/frontend
-npm install
-```
-Build the project for production. The assets will automatically build under the `/monitoring/` base path:
-```bash
-npm run build
-```
-This generates a `dist/` folder containing the optimized assets.
-
-### Step 4: Move Static Build Files to Web Root
-Create the target directories under `/var/www/` for Nginx:
-```bash
-sudo mkdir -p /var/www/server-analysis/frontend/monitoring
-```
-Copy the compiled static assets:
-```bash
-sudo cp -r dist/. /var/www/server-analysis/frontend/monitoring/
-```
-Set proper ownership and permissions:
-```bash
-sudo chown -R www-data:www-data /var/www/server-analysis/frontend
-sudo chmod -R 755 /var/www/server-analysis/frontend
-```
-
-### Step 5: Configure and Run Applications on PM2
-PM2 will manage and keep your node processes (Express backend, Vite preview server, and SSH Metrics collector) alive.
-
-First, navigate to your root project folder:
-```bash
+git clone <your-repo-url> /var/www/server-analysis
 cd /var/www/server-analysis
 ```
-Install backend dependencies:
-```bash
-cd backend && npm install --only=production && cd ..
-```
-Start all applications with PM2 using the ecosystem configuration:
-```bash
-pm2 start ecosystem.config.cjs
-```
-This launches three processes:
-- `server-analysis-backend` (REST API on port `3971`)
-- `server-analysis-frontend` (Vite Preview Server on port `3970`)
-- `server-analysis-ssh-collector` (Metrics poller daemon)
 
-Manage PM2 processes:
+**2. Run the deploy script:**
 ```bash
-pm2 list          # View running applications
-pm2 logs          # View live log streams
-pm2 restart all   # Restart all services
-pm2 stop all      # Stop all services
+chmod +x start.sh
+./start.sh
 ```
-Enable PM2 to launch automatically on server reboot:
+
+The script will:
+- Detect Node.js and install PM2 if needed
+- Prompt you to create `backend/.env` and `.env` if they don't exist
+- Install all dependencies
+- Build the frontend
+- Start everything with PM2
+
+**3. Open your browser:**
+```
+http://YOUR_SERVER_IP:3970/monitoring/
+```
+
+**4. (Optional) Enable auto-start on server reboot:**
 ```bash
 pm2 startup
-```
-Run the command suggested in your terminal, and save the process list:
-```bash
+# Run the command it prints, e.g.: sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu
 pm2 save
 ```
 
-### Step 6: Configure Nginx for Subpath Routing
-Create a new Nginx site configuration file:
+---
+
+## 🔧 Method B: Manual Step-by-Step (PM2 + Nginx)
+
+Use this method for full control or when integrating with an existing Nginx setup.
+
+### Step 1: Install Node.js and PM2
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y curl git
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+sudo npm install -g pm2
+```
+
+Verify:
+```bash
+node -v && npm -v && pm2 -v
+```
+
+### Step 2: Clone and Configure
+
+```bash
+git clone <your-repo-url> /var/www/server-analysis
+cd /var/www/server-analysis
+```
+
+Create the backend environment file:
+```bash
+cp backend/.env.example backend/.env
+nano backend/.env
+```
+
+Set the following values in `backend/.env`:
+```env
+PORT=3971
+MONGODB_URI=mongodb://admin:dMY8Rp0(K9S7Hy@217.145.69.228:27017/server_analysis?authSource=admin
+SEED_DUMMY_HISTORY=false
+```
+
+Create the root environment file (for the Nagios bridge):
+```bash
+cp .env.example .env
+nano .env
+```
+
+Set the following in `.env`:
+```env
+MONGODB_URI=mongodb://admin:dMY8Rp0(K9S7Hy@217.145.69.228:27017/server_analysis?authSource=admin
+NAGIOS_URL=http://217.145.69.228/nagios
+NAGIOS_USER=nagiosadmin
+NAGIOS_PASS=4z1lO3lXxNa$
+```
+
+### Step 3: Install Dependencies
+
+```bash
+cd backend && npm install --only=production && cd ..
+cd frontend && npm install && cd ..
+```
+
+### Step 4: Build the Frontend
+
+```bash
+cd frontend
+npm run build
+cd ..
+```
+
+This creates `frontend/dist/` with optimized assets under the `/monitoring/` base path.
+
+### Step 5: Start with PM2
+
+```bash
+pm2 start ecosystem.config.cjs
+pm2 save
+```
+
+This starts three processes:
+- `server-analysis-backend` — REST API on port **3971**
+- `server-analysis-frontend` — Vite preview server on port **3970**
+- `server-analysis-nagios-bridge` — Polls Nagios every 30s and pushes metrics to backend
+
+Check all processes:
+```bash
+pm2 list
+pm2 logs
+```
+
+### Step 6: (Optional) Configure Nginx Reverse Proxy
+
+If you want to serve the dashboard under a domain or subpath via port 80, create an Nginx config:
+
 ```bash
 sudo nano /etc/nginx/sites-available/server-analysis
 ```
-Paste the following configuration:
+
+Paste:
 ```nginx
 server {
     listen 80;
-    server_name _; # Replace with your domain or IP address
+    server_name _; # Replace with your domain or IP
 
-    # Root directory pointing to the web root
-    root /var/www/server-analysis/frontend;
-    index index.html index.htm;
+    root /var/www/html;
+    index index.html;
 
-    # Serve built static frontend SPA under subpath
+    # Serve built static frontend SPA
     location /monitoring {
-        alias /var/www/server-analysis/frontend/monitoring;
-        index index.html index.htm;
+        alias /var/www/server-analysis/frontend/dist;
+        index index.html;
         try_files $uri $uri/ /monitoring/index.html;
     }
 
-    # Vite Dev Server HMR client support for DevOps
-    location /@vite/ {
-        proxy_pass http://127.0.0.1:3970;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-    }
-
-    # Reverse proxy for local Express backend and health checks
+    # Reverse proxy for the backend API
     location /monitoring-apis/ {
         proxy_pass http://127.0.0.1:3971/;
         proxy_http_version 1.1;
@@ -165,146 +173,155 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Redirect root / to /monitoring/
+    # Redirect root to dashboard
     location = / {
         return 301 /monitoring/;
     }
-
-    # Error handling
-    error_page 500 502 503 504 /50x.html;
-    location = /50x.html {
-        root /usr/share/nginx/html;
-    }
 }
 ```
-Save the file and link the configuration to enable it:
+
+Enable and reload:
 ```bash
 sudo ln -sf /etc/nginx/sites-available/server-analysis /etc/nginx/sites-enabled/
-```
-Disable the default site (if conflicted):
-```bash
 sudo rm -f /etc/nginx/sites-enabled/default
-```
-Test and restart Nginx:
-```bash
 sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-### Step 7: Allow Traffic Through Firewall
-Ensure HTTP traffic and frontend direct access are allowed:
-```bash
-sudo ufw allow 80/tcp
-sudo ufw allow 3970/tcp
-```
-Now, visit your server’s IP in a browser:
-`http://your_server_ip/monitoring`
+Then visit: `http://YOUR_SERVER_IP/monitoring`
 
 ---
 
-## Method B: Docker Compose Deployment (Containerized)
+## 🐳 Method C: Docker Compose
 
-Follow these steps if you want to deploy the entire stack containerized.
+Use this for fully containerized deployments.
 
-### Step 1: Install Docker and Docker Compose
-Install Docker on Ubuntu:
+### Prerequisites
 ```bash
 curl -fsSL https://get.docker.com | bash
 sudo apt install -y docker-compose-plugin
 ```
 
-### Step 2: Configure Environment Variables
-Create a `.env` file in the root directory:
+### Steps
+
+**1. Clone and configure:**
 ```bash
+git clone <your-repo-url> /var/www/server-analysis
 cd /var/www/server-analysis
+cp .env.example .env
 nano .env
 ```
-Paste and save the following:
+
+Set in `.env`:
 ```env
 MONGODB_URI=mongodb://admin:dMY8Rp0(K9S7Hy@217.145.69.228:27017/server_analysis?authSource=admin
-SSH_KEY_PATH=/home/devops/.ssh/id_rsa
-SSH_USER=root
+NAGIOS_PASS=4z1lO3lXxNa$
 ```
 
-### Step 3: Run the Containers
-Build the Docker images and spin up the containers in background (detached) mode:
+**2. Build and start containers:**
 ```bash
 docker compose up -d --build
 ```
-This builds and boots:
-- `server-analysis-frontend` (Nginx serving frontend assets under `/monitoring` on port `3970`)
-- `server-analysis-backend` (Node Express API on port `3971`)
-- `server-analysis-collector` (Metrics poller script)
 
-### Step 4: Configure Host Nginx Reverse Proxy
-To hook up your host server Nginx to the containerized frontend, configure your Nginx server block:
-```nginx
-location /monitoring/ {
-    proxy_pass http://127.0.0.1:3970; # Forwards to the frontend docker container
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection 'upgrade';
-    proxy_set_header Host $host;
-    proxy_cache_bypass $http_upgrade;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
+This starts:
+- `server-analysis-backend` — Express API on port **3971**
+- `server-analysis-frontend` — Nginx serving frontend on port **3970**
+- `server-analysis-nagios-bridge` — Nagios data collector
 
-location /@vite/ {
-    proxy_pass http://127.0.0.1:3970;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection 'upgrade';
-    proxy_set_header Host $host;
-}
-```
-Test and reload Nginx:
+**3. Check status:**
 ```bash
-sudo nginx -t
-sudo systemctl reload nginx
+docker compose ps
+docker compose logs -f nagios-bridge   # Watch data flowing in from Nagios
+docker compose logs -f backend         # Watch backend API logs
 ```
-Visit `http://your_server_ip/monitoring` to verify. 🚀
+
+**4. Visit:** `http://YOUR_SERVER_IP:3970/monitoring/`
 
 ---
 
-## Method C: Automated SSH Key Distribution
+## 🌐 Testing with ngrok (Temporary Public URL)
 
-To automate the key distribution to all 13 production target servers, DevOps can run the automated distribution script:
+Use this to quickly test the backend is accessible from the internet, without any server setup.
 
+**On your local machine:**
 ```bash
-# 1. Make the script executable
-chmod +x deployment/setup-ssh-keys.sh
+# Start the backend
+cd backend && npm start &
 
-# 2. Run the script
-./deployment/setup-ssh-keys.sh
+# Start the Nagios bridge (in another terminal)
+node nagios-bridge.js &
+
+# Expose the backend via ngrok
+npx ngrok http 3971
 ```
 
-This script will:
-*   Install `sshpass` if needed to push the public key automatically if a password is provided.
-*   Distribute your public key (`~/.ssh/id_rsa.pub`) to all 13 remote targets.
-*   Verify keyless connections to all servers to ensure they are configured correctly.
+ngrok will print a public URL like `https://abc123.ngrok.io`. To test:
+```
+https://abc123.ngrok.io/health
+https://abc123.ngrok.io/api/metrics/current
+```
+
+To connect the frontend to this ngrok URL during local testing:
+```bash
+cd frontend
+VITE_API_URL=https://abc123.ngrok.io npm run dev
+```
 
 ---
 
-## Method D: Automatic Mapping of New Servers (Zero Config)
+## 📊 How Data Gets into the Dashboard
 
-When deploying a new server to the cluster, there is **no need to manually edit configuration files** to register it on the dashboard. The server maps itself automatically.
+The dashboard displays **real metrics from your Nagios-monitored servers**:
 
-### Step 1: Copy the Collector Agent
-Copy `collector.js` onto the new target server.
+```
+Nagios (217.145.69.228)
+        ↓  (HTTP/JSON every 30s)
+nagios-bridge.js  ←── polls statusjson.cgi
+        ↓  (POST /api/metrics)
+Backend API (port 3971)
+        ↓  (MongoDB write)
+MongoDB (217.145.69.228:27017)
+        ↑  (GET /api/metrics/current)
+Frontend Dashboard (port 3970)
+```
 
-### Step 2: Start the Collector Agent
-Run the collector on the new target server as a background service (using PM2 or systemd):
+---
+
+## 🔌 Adding a New Server to Monitoring
+
+No configuration changes needed! Deploy the lightweight collector on the new server:
+
 ```bash
-METRICS_API_URL="http://<DASHBOARD_SERVER_IP>/monitoring-apis/api/metrics" \
+# On the new server:
+METRICS_API_URL="http://DASHBOARD_SERVER_IP/monitoring-apis/api/metrics" \
 SERVER_ID="new-prod-web-04" \
 SERVER_NAME="Web Server 04" \
 node collector.js
 ```
 
-### How it behaves:
-*   The dashboard backend dynamically detects the new server registration on its first metric post.
-*   It automatically records the server's specifications (cores, total memory, and disk sizes) directly from the OS.
-*   The server will **automatically pop up** in the Server Fleet summary on the frontend dashboard without requiring any redeploys or manually restarting services.
+The server will automatically appear in the dashboard within seconds.
 
+---
+
+## 🛠 Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| Dashboard shows "No Active Servers Detected" | The backend or Nagios bridge is not running. Run `pm2 logs` and check for errors. |
+| Backend can't connect to MongoDB | Check `backend/.env` — verify `MONGODB_URI` has the correct password and the IP `217.145.69.228:27017` is reachable. |
+| Nagios bridge shows "No hosts found" | Verify `NAGIOS_URL`, `NAGIOS_USER`, `NAGIOS_PASS` in root `.env`. Test: `curl -u nagiosadmin:PASSWORD http://217.145.69.228/nagios/cgi-bin/statusjson.cgi?query=servicelist` |
+| Port 3971 not reachable | `sudo ufw allow 3971/tcp && sudo ufw allow 3970/tcp` |
+| PM2 processes crash on start | `pm2 logs` to see the error. Most common: missing `.env` file or wrong MongoDB URI. |
+
+---
+
+## Quick Reference
+
+```bash
+pm2 list                      # View running processes
+pm2 logs                      # Live log stream (all)
+pm2 logs server-analysis-nagios-bridge  # Nagios bridge only
+pm2 restart all               # Restart everything
+pm2 stop all                  # Stop everything
+pm2 startup && pm2 save       # Enable auto-start on reboot
+```
