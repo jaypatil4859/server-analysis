@@ -140,11 +140,24 @@ ok "Nginx reloaded successfully"
 step "Starting PM2 processes"
 cd "$APP_DIR"
 if pm2 list | grep -q "server-analysis-backend"; then
-  pm2 reload ecosystem.config.cjs --update-env
-  ok "PM2 processes reloaded"
+  pm2 reload server-analysis-backend
+  ok "Backend process reloaded"
 else
-  pm2 start ecosystem.config.cjs
-  ok "PM2 processes started"
+  pm2 start backend/server.js --name "server-analysis-backend"
+  ok "Backend process started"
+fi
+
+if pm2 list | grep -q "server-analysis-nagios-bridge"; then
+  pm2 reload server-analysis-nagios-bridge
+  ok "Nagios bridge process reloaded"
+else
+  pm2 start nagios-bridge.js --name "server-analysis-nagios-bridge"
+  ok "Nagios bridge process started"
+fi
+
+if pm2 list | grep -q "server-analysis-ssh-collector"; then
+  pm2 reload server-analysis-ssh-collector
+  ok "SSH collector process reloaded"
 fi
 
 pm2 startup systemd -u root --hp /root | tail -1 | bash 2>/dev/null || true

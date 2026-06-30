@@ -15,6 +15,15 @@ const path = require('path');
 
 const execPromise = util.promisify(exec);
 
+// Load environment variables from .env if present
+try {
+  const dotenv = require('./backend/node_modules/dotenv');
+  dotenv.config({ path: path.join(__dirname, '.env') });
+  dotenv.config({ path: path.join(__dirname, 'backend', '.env') });
+} catch (e) {
+  // Ignore if dotenv is not available
+}
+
 // ==================== CONFIGURATION ====================
 const DASHBOARD_API_URL = process.env.METRICS_API_URL || 'http://localhost:3971/api/metrics';
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '30000', 10); // Poll every 30 seconds
@@ -403,9 +412,6 @@ let ServerMetricModel = null;
 
 async function saveToMongoDirectly(payload) {
   try {
-    const path = require('path');
-    const dotenv = require('./backend/node_modules/dotenv');
-    dotenv.config({ path: path.join(__dirname, '.env') });
 
     const mongoUri = process.env.MONGODB_URI;
     if (!mongoUri) {

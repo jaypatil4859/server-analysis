@@ -83,13 +83,18 @@ cd ..
 
 ### Step 3: Start Node API and Nagios Bridge via PM2
 ```bash
-pm2 start ecosystem.config.cjs
+# Start backend REST API
+pm2 start backend/server.js --name "server-analysis-backend"
+
+# Start Nagios integration bridge
+pm2 start nagios-bridge.js --name "server-analysis-nagios-bridge"
+
 pm2 save
 ```
-*PM2 will automatically read the `.env` credentials and start:*
-1. `server-analysis-backend` (port `3971` in cluster mode across all CPU cores)
+*PM2 will start the apps, which will automatically read configuration from the `.env` files:*
+1. `server-analysis-backend` (REST API on port `3971`)
 2. `server-analysis-nagios-bridge` (polls the Nagios server and forwards data to the backend)
-*(It will automatically skip the Vite preview server in PM2 since static assets are served directly by Nginx).*
+*(Static assets are served directly by Nginx, so there is no PM2 process for the frontend on production servers).*
 
 ---
 

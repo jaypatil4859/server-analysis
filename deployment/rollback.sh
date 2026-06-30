@@ -46,7 +46,11 @@ ok "Frontend rebuilt and deployed"
 
 step "Reloading PM2"
 cd "$APP_DIR"
-pm2 reload ecosystem.config.cjs --update-env
+pm2 reload server-analysis-backend
+pm2 reload server-analysis-nagios-bridge
+if pm2 list | grep -q "server-analysis-ssh-collector"; then
+  pm2 reload server-analysis-ssh-collector
+fi
 pm2 save
 ok "PM2 reloaded"
 

@@ -112,9 +112,18 @@ echo -e "${BOLD}Starting all services with PM2...${RESET}"
 pm2 delete server-analysis-backend 2>/dev/null || true
 pm2 delete server-analysis-frontend 2>/dev/null || true
 pm2 delete server-analysis-nagios-bridge 2>/dev/null || true
+pm2 delete server-analysis-ssh-collector 2>/dev/null || true
 
 # Start fresh
-pm2 start ecosystem.config.cjs
+pm2 start backend/server.js --name "server-analysis-backend"
+pm2 start nagios-bridge.js --name "server-analysis-nagios-bridge"
+
+# Start Vite Frontend (only if Vite is installed in frontend/node_modules)
+if [ -f "frontend/node_modules/vite/bin/vite.js" ]; then
+  pm2 start frontend/node_modules/vite/bin/vite.js --name "server-analysis-frontend" --cwd frontend -- preview
+else
+  echo -e "  [PM2 Info] Vite is not installed in frontend/node_modules. Skipping frontend PM2 process."
+fi
 
 # Save PM2 process list for auto-restart on reboot
 pm2 save

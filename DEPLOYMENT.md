@@ -120,15 +120,23 @@ This creates `frontend/dist/` with optimized assets under the `/monitoring/` bas
 
 ### Step 5: Start with PM2
 
+Start the Node API backend and the Nagios integration bridge:
+
 ```bash
-pm2 start ecosystem.config.cjs
+# Start backend
+pm2 start backend/server.js --name "server-analysis-backend"
+
+# Start nagios-bridge
+pm2 start nagios-bridge.js --name "server-analysis-nagios-bridge"
+
 pm2 save
 ```
 
-This starts three processes:
+This starts two processes:
 - `server-analysis-backend` — REST API on port **3971**
-- `server-analysis-frontend` — Vite preview server on port **3970**
 - `server-analysis-nagios-bridge` — Polls Nagios every 30s and pushes metrics to backend
+
+*(Note: Static frontend assets are built into `frontend/dist` and served directly by Nginx, so there is no need to run a PM2 process for the frontend on production servers).*
 
 Check all processes:
 ```bash

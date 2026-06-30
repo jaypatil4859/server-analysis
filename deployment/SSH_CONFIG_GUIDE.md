@@ -68,7 +68,10 @@ Restart the PM2 processes to load the new environment variables:
 
 ```bash
 cd /var/dev/server-analysis
-pm2 reload ecosystem.config.cjs --update-env
+# If already running, reload the SSH collector
+pm2 reload server-analysis-ssh-collector
+# If not running, start it
+pm2 start ssh-collector.js --name "server-analysis-ssh-collector"
 pm2 save
 ```
 

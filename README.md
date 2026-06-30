@@ -68,7 +68,6 @@ server-analysis/
 ├── ssh-collector.js       # Real-time SSH metrics collector
 ├── collector.js           # Per-server agent (optional)
 ├── laptop-collector.js    # Laptop telemetry agent
-├── ecosystem.config.cjs   # PM2 process config
 ├── docker-compose.yml     # Docker Compose stack
 └── DEPLOYMENT.md          # Full DevOps handover guide
 ```

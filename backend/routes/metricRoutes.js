@@ -1002,6 +1002,11 @@ router.get('/combustion-summary', async (req, res) => {
         currentMap[s.serverId] = s;
       });
 
+      const map24h = {};
+      metrics24h.forEach(s => {
+        map24h[s.serverId] = s;
+      });
+
       const map7d = {};
       metrics7d.forEach(s => {
         map7d[s.serverId] = s;
@@ -1016,7 +1021,7 @@ router.get('/combustion-summary', async (req, res) => {
 
       allServerIds.forEach(serverId => {
         const current = currentMap[serverId] || { cpuUsage: 0, ramUsagePercent: 0, serverName: serverId };
-        const m24h = metrics24h.find(s => s.serverId === serverId) || { maxCpu: 0, maxRam: 0, serverName: current.serverName };
+        const m24h = map24h[serverId] || { maxCpu: 0, maxRam: 0, serverName: current.serverName };
         const m7d = map7d[serverId] || { maxCpu: 0, maxRam: 0, serverName: current.serverName };
 
         serverSummaries.push({
