@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Server, Cpu, HardDrive, Database, Layers, Clock, Activity, 
-  TrendingUp, AlertCircle, Terminal, RefreshCw, AlertTriangle,
+  TrendingUp, RefreshCw, AlertTriangle,
   Laptop, Battery, BatteryCharging, Wifi, Monitor, Flame,
-  Zap, MousePointer, Keyboard, Percent, Compass, FileText, CheckCircle,
-  Bell, BellRing, Trash2, ShieldAlert, Check, AlertOctagon, Calendar
+  Zap, Compass, CheckCircle,
+  Bell, BellRing, Trash2, ShieldAlert, Check, Calendar
 } from 'lucide-react';
 import { 
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, 
@@ -136,6 +136,7 @@ export default function App() {
   useEffect(() => {
     if ('Notification' in window) {
       if (Notification.permission === 'granted') {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setBrowserNotificationsGranted(true);
       }
     }
@@ -221,7 +222,6 @@ export default function App() {
         setPeakAnalysis([]);
         setWeeklyHistory([]);
         setAlerts([]);
-        setIsMockData(false);
         setCombustionData({
           serverSummaries: [],
           above80in24h: [],
@@ -367,6 +367,7 @@ export default function App() {
   }, [selectedLaptopId, chartViewMode, selectedServerId, singleServerTimeframe]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
     const interval = setInterval(() => {
       fetchData(true);
@@ -419,14 +420,6 @@ export default function App() {
   };
 
   const weeklySummary = getWeeklySummary();
-
-  // Find unique server names for plotting dynamic chart lines
-  const serverNames = servers.map(s => s.serverName);
-  const colors = [
-    '#c5a880', '#e2e2e5', '#9f8c77', '#9eb59b', '#c59f8a',
-    '#a8b6c5', '#c5a0a8', '#b5a8c5', '#a8c5b9', '#c5b7a8',
-    '#d6b09a', '#b0d69a', '#9ad6cc'
-  ];
 
   // Default Laptop
   const activeLaptop = laptops.find(l => l.laptopId === selectedLaptopId) || laptops[0] || null;
@@ -577,6 +570,25 @@ export default function App() {
           </button>
         </div>
       </div>
+
+      {error && (
+        <div style={{
+          backgroundColor: 'rgba(184, 113, 88, 0.08)',
+          border: '1px solid rgba(184, 113, 88, 0.25)',
+          color: 'var(--danger-color)',
+          padding: '12px 24px',
+          margin: '24px 32px 0 32px',
+          borderRadius: '6px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          fontSize: '13px',
+          textAlign: 'left'
+        }}>
+          <AlertTriangle size={16} />
+          <span><strong>API Connection Issue:</strong> {error}</span>
+        </div>
+      )}
 
       {viewMode === 'servers' ? (
         /* --- SERVERS DASHBOARD --- */
