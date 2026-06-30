@@ -13,8 +13,8 @@ async function cleanup() {
     await mongoose.connect(MONGODB_URI);
     console.log('Connected successfully. Cleaning up dummy data...');
 
-    // Regex to match dummy servers starting with: web-server-, db-server-, cache-server-
-    const dummyRegex = /^(web-server-|db-server-|cache-server-)/;
+    // Regex to match dummy servers starting with: web-server-, db-server-, cache-server-, test-server-, preview-vm-
+    const dummyRegex = /^(web-server-|db-server-|cache-server-|test-server-|preview-vm-)/;
 
     // Delete metrics
     const metricsResult = await ServerMetric.deleteMany({ serverId: dummyRegex });

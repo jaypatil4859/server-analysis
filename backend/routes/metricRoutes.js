@@ -20,7 +20,7 @@ const lastAlertedTimes = {}; // e.g., { 'web-server-01': { CPU: timestamp, RAM: 
 const SERVERS = [];
 
 // Dummy server IDs and prefixes to filter out
-const DUMMY_PREFIXES = ['web-server-', 'db-server-', 'cache-server-'];
+const DUMMY_PREFIXES = ['web-server-', 'db-server-', 'cache-server-', 'test-server-', 'preview-vm-'];
 const isDummyServer = (serverId) => DUMMY_PREFIXES.some(prefix => serverId && serverId.startsWith(prefix));
 
 const seedInMemory = () => {
@@ -437,7 +437,7 @@ router.get('/current', async (req, res) => {
   try {
     if (isMongoConnected()) {
       const servers = await ServerMetric.aggregate([
-        { $match: { serverId: { $not: /^(web-server-|db-server-|cache-server-)/ } } },
+        { $match: { serverId: { $not: /^(web-server-|db-server-|cache-server-|test-server-|preview-vm-)/ } } },
         { $sort: { timestamp: -1 } },
         {
           $group: {
@@ -482,7 +482,7 @@ router.get('/ram-history-24h', async (req, res) => {
       const history = await ServerMetric.aggregate([
         { 
           $match: { 
-            serverId: { $not: /^(web-server-|db-server-|cache-server-)/ },
+            serverId: { $not: /^(web-server-|db-server-|cache-server-|test-server-|preview-vm-)/ },
             timestamp: { $gte: twentyFourHoursAgo } 
           } 
         },
@@ -577,7 +577,7 @@ router.get('/history-weekly', async (req, res) => {
       const history = await ServerMetric.aggregate([
         { 
           $match: { 
-            serverId: { $not: /^(web-server-|db-server-|cache-server-)/ },
+            serverId: { $not: /^(web-server-|db-server-|cache-server-|test-server-|preview-vm-)/ },
             timestamp: { $gte: sevenDaysAgo } 
           } 
         },
@@ -684,7 +684,7 @@ router.get('/history-monthly', async (req, res) => {
       const history = await ServerMetric.aggregate([
         { 
           $match: { 
-            serverId: { $not: /^(web-server-|db-server-|cache-server-)/ },
+            serverId: { $not: /^(web-server-|db-server-|cache-server-|test-server-|preview-vm-)/ },
             timestamp: { $gte: thirtyDaysAgo } 
           } 
         },
@@ -1098,7 +1098,7 @@ router.get('/peak-analysis', async (req, res) => {
   try {
     if (isMongoConnected()) {
       const analysis = await ServerMetric.aggregate([
-        { $match: { serverId: { $not: /^(web-server-|db-server-|cache-server-)/ } } },
+        { $match: { serverId: { $not: /^(web-server-|db-server-|cache-server-|test-server-|preview-vm-)/ } } },
         {
           $project: {
             serverId: 1,
@@ -1188,7 +1188,7 @@ router.get('/peak-analysis', async (req, res) => {
 router.get('/alerts', async (req, res) => {
   try {
     if (isMongoConnected()) {
-      const alerts = await Alert.find({ serverId: { $not: /^(web-server-|db-server-|cache-server-)/ } }).sort({ timestamp: -1 }).limit(50);
+      const alerts = await Alert.find({ serverId: { $not: /^(web-server-|db-server-|cache-server-|test-server-|preview-vm-)/ } }).sort({ timestamp: -1 }).limit(50);
       return res.json(alerts);
     } else {
       // Return memory alerts sorted newest first

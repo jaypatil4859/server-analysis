@@ -21,8 +21,14 @@
 // Load .env from project root if present
 const path = require('path');
 try {
-  require('dotenv').config({ path: path.join(__dirname, '.env') });
-  require('dotenv').config({ path: path.join(__dirname, 'backend', '.env') });
+  let dotenv;
+  try {
+    dotenv = require(path.join(__dirname, 'backend', 'node_modules', 'dotenv'));
+  } catch (e) {
+    dotenv = require('dotenv');
+  }
+  dotenv.config({ path: path.join(__dirname, '.env') });
+  dotenv.config({ path: path.join(__dirname, 'backend', '.env') });
 } catch (e) {
   // dotenv is optional — continue without it if not installed
 }
@@ -51,6 +57,62 @@ const SERVER_SPECS = {
   'sgdb':           { cores: 8,  ramGB: 16, diskGB: 500 },
   'sify-app':       { cores: 4,  ramGB: 16, diskGB: 250 }
 };
+
+let DB_SERVER_SPECS = {};
+
+async function loadSpecsFromDB() {
+  try {
+    const mongoUri = process.env.MONGODB_URI;
+    if (!mongoUri) {
+      console.log('[Nagios Bridge Specs Loader] MONGODB_URI not defined, using default/fallback specs.');
+      return;
+    }
+
+    let mongoose;
+    try {
+      mongoose = require(path.join(__dirname, 'backend', 'node_modules', 'mongoose'));
+    } catch (e) {
+      try {
+        mongoose = require('mongoose');
+      } catch (e2) {
+        console.warn('[Nagios Bridge Specs Loader] mongoose not found. Using default/fallback specs.');
+        return;
+      }
+    }
+
+    // Connect to database to read the specs
+    const tempConn = await mongoose.createConnection(mongoUri, { serverSelectionTimeoutMS: 5000 }).asPromise();
+    
+    // Minimal schema to read hardware specs
+    const schema = new mongoose.Schema({
+      serverId: String,
+      cpuCores: Number,
+      ramUsage: { totalBytes: Number },
+      diskUsage: { totalBytes: Number },
+      timestamp: Date
+    });
+    const Model = tempConn.model('ServerMetric', schema);
+
+    const distinctIds = await Model.distinct('serverId');
+    const newSpecs = {};
+    for (const id of distinctIds) {
+      const latestDoc = await Model.findOne({ serverId: id }).sort({ timestamp: -1 });
+      if (latestDoc) {
+        newSpecs[id] = {
+          cores: latestDoc.cpuCores || 4,
+          ramGB: latestDoc.ramUsage?.totalBytes ? Math.round(latestDoc.ramUsage.totalBytes / (1024 * 1024 * 1024)) : 16,
+          diskGB: latestDoc.diskUsage?.totalBytes ? Math.round(latestDoc.diskUsage.totalBytes / (1024 * 1024 * 1024)) : 250
+        };
+      }
+    }
+
+    await tempConn.close();
+    DB_SERVER_SPECS = newSpecs;
+    console.log(`[Nagios Bridge Specs Loader] Loaded specs from DB for:`, Object.keys(DB_SERVER_SPECS));
+  } catch (err) {
+    console.warn(`[Nagios Bridge Specs Loader] Failed to fetch specs from DB:`, err.message);
+  }
+}
 
 console.log(`[Nagios Bridge] Starting...`);
 console.log(`[Nagios Bridge] Nagios endpoint : ${NAGIOS_URL}`);
@@ -237,6 +299,7 @@ function parseMemoryCheck(pluginOutput, longPluginOutput) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function parseAndSendMetrics() {
+  await loadSpecsFromDB();
   console.log(`\n--- [Nagios Bridge] Polling Nagios... ---`);
   const services = await fetchServiceList();
   const hosts = Object.keys(services);
@@ -250,7 +313,7 @@ async function parseAndSendMetrics() {
 
   for (const hostName of hosts) {
     const sanitizedId = hostName.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
-    const specs = SERVER_SPECS[sanitizedId] || { cores: 4, ramGB: 16, diskGB: 250 };
+    const specs = DB_SERVER_SPECS[sanitizedId] || SERVER_SPECS[sanitizedId] || { cores: 4, ramGB: 16, diskGB: 250 };
 
     const serverCores      = specs.cores;
     const specTotalRamBytes  = specs.ramGB  * 1024 * 1024 * 1024;
