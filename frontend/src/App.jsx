@@ -664,9 +664,12 @@ export default function App() {
             ) : (
               <div className="servers-grid">
                 {servers.map((server) => {
-                  const isStale = new Date() - new Date(server.timestamp) > 60000;
+                  const isStale = new Date() - new Date(server.timestamp) > 300000;
                   const isOverloaded = server.cpuUsage >= 90 || server.ramUsage.usagePercent >= 90;
                   
+                  const lastActiveSecs = Math.max(0, Math.floor((new Date() - new Date(server.timestamp)) / 1000));
+                  const lastActiveText = lastActiveSecs < 60 ? `${lastActiveSecs}s ago` : `${Math.floor(lastActiveSecs / 60)}m ago`;
+
                   return (
                     <div 
                       key={server.serverId} 
@@ -700,9 +703,14 @@ export default function App() {
                             <span className="server-id-sub">{server.serverId}</span>
                           )}
                         </div>
-                        <span className={`server-status-dot ${isStale ? 'stale' : 'active'}`}>
-                          {isStale ? 'Stale' : 'Online'}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
+                          <span className={`server-status-dot ${isStale ? 'stale' : 'active'}`}>
+                            {isStale ? 'Stale' : 'Online'}
+                          </span>
+                          <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>
+                            {lastActiveText}
+                          </span>
+                        </div>
                       </div>
 
                       <div className="server-metrics-container">
@@ -749,32 +757,30 @@ export default function App() {
                         </div>
 
                         {/* Storage (Disk) Progress Bar */}
-                        <div className="metric-row">
-                          <div className="metric-label-val">
-                            <span className="metric-label">
-                              <Database size={12} /> Storage (Disk)
-                            </span>
-                            <span className="metric-value disk" style={server.diskUsage && server.diskUsage.usagePercent >= 90 ? { color: 'var(--danger-color)' } : {}}>
-                              {server.diskUsage ? `${server.diskUsage.usagePercent}%` : 'N/A'}
-                            </span>
+                        {server.diskUsage && server.diskUsage.totalBytes > 0 && (
+                          <div className="metric-row">
+                            <div className="metric-label-val">
+                              <span className="metric-label">
+                                <Database size={12} /> Storage (Disk)
+                              </span>
+                              <span className="metric-value disk" style={server.diskUsage.usagePercent >= 90 ? { color: 'var(--danger-color)' } : {}}>
+                                {server.diskUsage.usagePercent}%
+                              </span>
+                            </div>
+                            <div className="progress-track">
+                              <div 
+                                className="progress-bar disk" 
+                                style={{ 
+                                  width: `${server.diskUsage.usagePercent}%`,
+                                  backgroundColor: server.diskUsage.usagePercent >= 90 ? 'var(--danger-color)' : 'var(--disk-color)'
+                                }}
+                              ></div>
+                            </div>
+                            <div className="ram-details-text">
+                              {`${(server.diskUsage.usedBytes / (1024 * 1024 * 1024)).toFixed(1)} GB / ${(server.diskUsage.totalBytes / (1024 * 1024 * 1024)).toFixed(0)} GB`}
+                            </div>
                           </div>
-                          <div className="progress-track">
-                            <div 
-                              className="progress-bar disk" 
-                              style={{ 
-                                width: server.diskUsage ? `${server.diskUsage.usagePercent}%` : '0%',
-                                backgroundColor: server.diskUsage && server.diskUsage.usagePercent >= 90 ? 'var(--danger-color)' : 'var(--disk-color)'
-                              }}
-                            ></div>
-                          </div>
-                          <div className="ram-details-text">
-                            {server.diskUsage ? (
-                              `${(server.diskUsage.usedBytes / (1024 * 1024 * 1024)).toFixed(1)} GB / ${(server.diskUsage.totalBytes / (1024 * 1024 * 1024)).toFixed(0)} GB`
-                            ) : (
-                              'No disk telemetry available'
-                            )}
-                          </div>
-                        </div>
+                        )}
 
                         {/* Load Displays */}
                         <div className="metric-row">
@@ -792,6 +798,39 @@ export default function App() {
                             <span className="load-val-item"><strong>{server.loadAverage.fifteenMin}</strong> <span className="load-lbl-sub">15m</span></span>
                           </div>
                         </div>
+
+                        {/* Monitored Services Section */}
+                        {server.services && server.services.length > 0 && (
+                          <div className="server-services-section">
+                            <div className="services-title">
+                              <Activity size={12} className="services-title-icon" />
+                              <span>Monitored Services</span>
+                            </div>
+                            <div className="services-list-container">
+                              {server.services.map((service, idx) => {
+                                let statusClass = 'unknown';
+                                const sLower = (service.status || '').toLowerCase();
+                                if (sLower === 'ok') statusClass = 'ok';
+                                else if (sLower === 'warning') statusClass = 'warning';
+                                else if (sLower === 'critical') statusClass = 'critical';
+
+                                return (
+                                  <div 
+                                    key={idx} 
+                                    className="service-item-row" 
+                                    title={service.output || 'No output details'}
+                                  >
+                                    <span className="service-name">{service.name}</span>
+                                    <span className={`service-status-badge ${statusClass}`}>
+                                      <span className="service-status-dot"></span>
+                                      {service.status}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );

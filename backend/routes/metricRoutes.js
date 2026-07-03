@@ -213,7 +213,7 @@ const triggerAlertNotifications = async (alert) => {
 // 1. Log metrics from a server
 router.post('/', async (req, res) => {
   try {
-    const { serverId, serverName, cpuUsage, ramUsage, loadAverage, cpuCores, diskUsage, timestamp } = req.body;
+    const { serverId, serverName, cpuUsage, ramUsage, loadAverage, cpuCores, diskUsage, timestamp, services } = req.body;
     
     if (!serverId || !serverName || cpuUsage === undefined || !ramUsage || !loadAverage) {
       return res.status(400).json({ error: 'Missing required metrics fields.' });
@@ -225,16 +225,6 @@ router.post('/', async (req, res) => {
         totalBytes: parseInt(diskUsage.totalBytes),
         usedBytes: parseInt(diskUsage.usedBytes),
         usagePercent: parseFloat(diskUsage.usagePercent)
-      };
-    } else {
-      const diskPct = 40 + Math.random() * 20;
-      const totalGB = (serverName.toLowerCase().includes('db') || serverName.toLowerCase().includes('mongo') || serverName.toLowerCase().includes('mysql')) ? 500 : 250;
-      const totalBytes = totalGB * 1024 * 1024 * 1024;
-      const usedBytes = Math.round((diskPct / 100) * totalBytes);
-      parsedDisk = {
-        totalBytes,
-        usedBytes,
-        usagePercent: parseFloat(diskPct.toFixed(1))
       };
     }
 
@@ -254,7 +244,8 @@ router.post('/', async (req, res) => {
         fifteenMin: parseFloat(loadAverage.fifteenMin)
       },
       cpuCores: cpuCores ? parseInt(cpuCores) : undefined,
-      timestamp: timestamp ? new Date(timestamp) : new Date()
+      timestamp: timestamp ? new Date(timestamp) : new Date(),
+      services: services || []
     };
 
     if (isMongoConnected()) {

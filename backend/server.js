@@ -31,8 +31,21 @@ app.listen(PORT, () => {
 
 mongoose
   .connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
-  .then(() => {
-    console.log('Successfully connected to MongoDB');
+  .then(async () => {
+    try {
+      // Perform a lightweight check to verify authentication/authorization status
+      await mongoose.connection.db.listCollections().toArray();
+      console.log('Successfully connected and authenticated to MongoDB');
+    } catch (authError) {
+      console.error('MongoDB Auth Verification Failed:', authError.message);
+      console.warn('--------------------------------------------------------------------------------');
+      console.warn('CRITICAL WARNING: MongoDB requires authentication, but the credentials in');
+      console.warn('MONGODB_URI are missing, incorrect, or missing the correct ?authSource parameter.');
+      console.warn('Falling back to In-Memory database to keep the server alive.');
+      console.warn('Please check your MONGODB_URI environment variable configuration.');
+      console.warn('--------------------------------------------------------------------------------');
+      await mongoose.disconnect();
+    }
   })
   .catch((error) => {
     console.warn('WARNING: MongoDB is not reachable. Using In-Memory fallback database.');

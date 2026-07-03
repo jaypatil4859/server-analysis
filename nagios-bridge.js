@@ -135,10 +135,8 @@ async function saveToMongoDirectly(payload) {
 
     let mongoose;
     try {
-      // Try to load mongoose from the backend node_modules (most reliable location)
       mongoose = require(path.join(__dirname, 'backend', 'node_modules', 'mongoose'));
     } catch (e) {
-      // Fall back to globally installed mongoose
       try {
         mongoose = require('mongoose');
       } catch (e2) {
@@ -173,7 +171,14 @@ async function saveToMongoDirectly(payload) {
           fifteenMin:  { type: Number, required: true }
         },
         cpuCores:  { type: Number, default: 1 },
-        timestamp: { type: Date, default: Date.now, index: true }
+        timestamp: { type: Date, default: Date.now, index: true },
+        services: [
+          {
+            name: { type: String, required: true },
+            status: { type: String, required: true },
+            output: { type: String }
+          }
+        ]
       });
       ServerMetricSchema.index({ serverId: 1, timestamp: -1 });
 
@@ -200,7 +205,7 @@ const getAuthHeader = () => {
 
 async function fetchServiceList() {
   try {
-    const url = `${NAGIOS_URL}/cgi-bin/statusjson.cgi?query=servicelist`;
+    const url = `${NAGIOS_URL}/cgi-bin/statusjson.cgi?query=servicelist&details=true&formatoptions=enumerate`;
     const response = await fetch(url, {
       headers: { 'Authorization': getAuthHeader() },
       signal: AbortSignal.timeout(15000)
@@ -219,30 +224,6 @@ async function fetchServiceList() {
   } catch (error) {
     console.error(`[Nagios Bridge] Failed to fetch service list:`, error.message);
     return {};
-  }
-}
-
-async function fetchServiceDetails(hostname, serviceDescription) {
-  try {
-    const url = `${NAGIOS_URL}/cgi-bin/statusjson.cgi?query=service&hostname=${encodeURIComponent(hostname)}&servicedescription=${encodeURIComponent(serviceDescription)}`;
-    const response = await fetch(url, {
-      headers: { 'Authorization': getAuthHeader() },
-      signal: AbortSignal.timeout(10000)
-    });
-
-    if (!response.ok) {
-      throw new Error(`Nagios returned HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-    if (data.result && data.result.type_code !== 0) {
-      throw new Error(`Nagios query error: ${data.result.message}`);
-    }
-
-    return data.data.service || null;
-  } catch (error) {
-    console.error(`[Nagios Bridge] Failed to fetch service details for ${hostname} - ${serviceDescription}:`, error.message);
-    return null;
   }
 }
 
@@ -333,91 +314,80 @@ async function parseAndSendMetrics() {
 
     const hostServices = services[hostName] || {};
 
+    // Collect all services statuses for this host
+    const servicesList = [];
+    for (const [serviceDesc, sDetails] of Object.entries(hostServices)) {
+      if (sDetails) {
+        servicesList.push({
+          name: serviceDesc,
+          status: sDetails.status || 'unknown',
+          output: sDetails.plugin_output || ''
+        });
+      }
+    }
+
     // 1. Process CPU / Load Average
-    if (hostServices['CPU check'] !== undefined) {
-      const details = await fetchServiceDetails(hostName, 'CPU check');
-      if (details && details.plugin_output) {
-        const val = parseCpuCheck(details.plugin_output);
-        if (val !== null) {
-          parsedCpu  = parseFloat(Math.min(99.9, (val / serverCores) * 100).toFixed(1));
-          parsedLoad = {
-            oneMin:     val,
-            fiveMin:    parseFloat((val * 0.9).toFixed(2)),
-            fifteenMin: parseFloat((val * 0.85).toFixed(2))
-          };
+    const cpuCheck = hostServices['CPU check'];
+    if (cpuCheck && cpuCheck.plugin_output) {
+      const val = parseCpuCheck(cpuCheck.plugin_output);
+      if (val !== null) {
+        parsedCpu  = parseFloat(Math.min(99.9, (val / serverCores) * 100).toFixed(1));
+        parsedLoad = {
+          oneMin:     val,
+          fiveMin:    parseFloat((val * 0.9).toFixed(2)),
+          fifteenMin: parseFloat((val * 0.85).toFixed(2))
+        };
+      }
+    }
+
+    const loadAvgCheck = hostServices['Load Average'];
+    if (loadAvgCheck && loadAvgCheck.plugin_output) {
+      const load = parseLoadAverage(loadAvgCheck.plugin_output);
+      if (load) {
+        parsedLoad = load;
+        if (parsedCpu === null) {
+          parsedCpu = parseFloat(Math.min(99.9, (load.oneMin / serverCores) * 100).toFixed(1));
         }
       }
     }
 
-    if (hostServices['Load Average'] !== undefined) {
-      const details = await fetchServiceDetails(hostName, 'Load Average');
-      if (details && details.plugin_output) {
-        const load = parseLoadAverage(details.plugin_output);
-        if (load) {
-          parsedLoad = load;
-          if (parsedCpu === null) {
-            parsedCpu = parseFloat(Math.min(99.9, (load.oneMin / serverCores) * 100).toFixed(1));
-          }
-        }
-      }
-    }
-
-    if (parsedLoad === null && hostServices['Uptime'] !== undefined) {
-      const details = await fetchServiceDetails(hostName, 'Uptime');
-      if (details && details.plugin_output) {
-        const load = parseLoadAverage(details.plugin_output);
-        if (load) {
-          parsedLoad = load;
-          if (parsedCpu === null) {
-            parsedCpu = parseFloat(Math.min(99.9, (load.oneMin / serverCores) * 100).toFixed(1));
-          }
+    const uptimeCheck = hostServices['Uptime'];
+    if (parsedLoad === null && uptimeCheck && uptimeCheck.plugin_output) {
+      const load = parseLoadAverage(uptimeCheck.plugin_output);
+      if (load) {
+        parsedLoad = load;
+        if (parsedCpu === null) {
+          parsedCpu = parseFloat(Math.min(99.9, (load.oneMin / serverCores) * 100).toFixed(1));
         }
       }
     }
 
     // 2. Process Memory (prefer precise memory check over generic Memory Usage)
-    if (hostServices['memory check'] !== undefined) {
-      const details = await fetchServiceDetails(hostName, 'memory check');
-      if (details) {
-        const ram = parseMemoryCheck(details.plugin_output || '', details.long_plugin_output || '');
-        if (ram) parsedRam = ram;
-      }
+    const memCheck = hostServices['memory check'];
+    if (memCheck) {
+      const ram = parseMemoryCheck(memCheck.plugin_output || '', memCheck.long_plugin_output || '');
+      if (ram) parsedRam = ram;
     }
 
-    if (parsedRam === null && hostServices['Memory Usage'] !== undefined) {
-      const details = await fetchServiceDetails(hostName, 'Memory Usage');
-      if (details && details.plugin_output) {
-        const pct = parseMemoryUsage(details.plugin_output);
-        if (pct !== null) {
-          parsedRam = {
-            totalBytes:   specTotalRamBytes,
-            usedBytes:    Math.round((pct / 100) * specTotalRamBytes),
-            usagePercent: pct
-          };
-        }
+    const memUsageCheck = hostServices['Memory Usage'];
+    if (parsedRam === null && memUsageCheck && memUsageCheck.plugin_output) {
+      const pct = parseMemoryUsage(memUsageCheck.plugin_output);
+      if (pct !== null) {
+        parsedRam = {
+          totalBytes:   specTotalRamBytes,
+          usedBytes:    Math.round((pct / 100) * specTotalRamBytes),
+          usagePercent: pct
+        };
       }
     }
 
     // 3. Process Disk
     let parsedDiskPercent = null;
-    if (hostServices['Disk Space'] !== undefined) {
-      const details = await fetchServiceDetails(hostName, 'Disk Space');
-      if (details && details.plugin_output) {
-        const match = details.plugin_output.match(/(\d+(?:\.\d+)?)\s*%/);
-        if (match) parsedDiskPercent = parseFloat(match[1]);
-      }
-    } else if (hostServices['Disk Usage'] !== undefined) {
-      const details = await fetchServiceDetails(hostName, 'Disk Usage');
-      if (details && details.plugin_output) {
-        const match = details.plugin_output.match(/(\d+(?:\.\d+)?)\s*%/);
-        if (match) parsedDiskPercent = parseFloat(match[1]);
-      }
+    const diskSpaceCheck = hostServices['Disk Space'] || hostServices['Disk Usage'];
+    if (diskSpaceCheck && diskSpaceCheck.plugin_output) {
+      const match = diskSpaceCheck.plugin_output.match(/(\d+(?:\.\d+)?)\s*%/);
+      if (match) parsedDiskPercent = parseFloat(match[1]);
     }
-
-    // If disk is not monitored, use a stable fallback so the card shows something meaningful
-    const diskUsagePercent = parsedDiskPercent !== null ? parsedDiskPercent : (40 + Math.random() * 20);
-    const totalDiskBytes   = specTotalDiskBytes;
-    const usedDiskBytes    = Math.round((diskUsagePercent / 100) * totalDiskBytes);
 
     // Assign parsed values
     if (parsedCpu  !== null) cpuUsage = parsedCpu;
@@ -442,19 +412,27 @@ async function parseAndSendMetrics() {
         usedBytes:    usedRamBytes,
         usagePercent: parseFloat(ramUsagePercent.toFixed(1))
       },
-      diskUsage: {
-        totalBytes:   totalDiskBytes,
-        usedBytes:    usedDiskBytes,
-        usagePercent: parseFloat(diskUsagePercent.toFixed(1))
-      },
       loadAverage: {
         oneMin:     parseFloat(loadOneMin.toFixed(2)),
         fiveMin:    parseFloat(loadFiveMin.toFixed(2)),
         fifteenMin: parseFloat(loadFifteenMin.toFixed(2))
       },
       cpuCores:  serverCores,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      services:  servicesList
     };
+
+    // If disk is monitored, include it
+    if (parsedDiskPercent !== null) {
+      const diskUsagePercent = parsedDiskPercent;
+      const totalDiskBytes   = specTotalDiskBytes;
+      const usedDiskBytes    = Math.round((diskUsagePercent / 100) * totalDiskBytes);
+      payload.diskUsage = {
+        totalBytes:   totalDiskBytes,
+        usedBytes:    usedDiskBytes,
+        usagePercent: parseFloat(diskUsagePercent.toFixed(1))
+      };
+    }
 
     // Forward metrics to backend API
     try {
@@ -466,7 +444,7 @@ async function parseAndSendMetrics() {
       });
 
       if (postResponse.ok) {
-        console.log(`[OK] ${hostName} — CPU: ${cpuUsage}%, RAM: ${ramUsagePercent}%, Load: ${loadOneMin} (real CPU: ${parsedCpu !== null}, real RAM: ${parsedRam !== null})`);
+        console.log(`[OK] ${hostName} — CPU: ${cpuUsage}%, RAM: ${ramUsagePercent}%, Load: ${loadOneMin} (real CPU: ${parsedCpu !== null}, real RAM: ${parsedRam !== null}, real Disk: ${parsedDiskPercent !== null})`);
       } else {
         const errorTxt = await postResponse.text();
         console.error(`[WARN] Failed to forward metrics for ${sanitizedId}: HTTP ${postResponse.status} — ${errorTxt}`);

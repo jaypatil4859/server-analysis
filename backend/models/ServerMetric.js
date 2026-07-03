@@ -37,7 +37,14 @@ const ServerMetricSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
     index: true,
-  }
+  },
+  services: [
+    {
+      name: { type: String, required: true },
+      status: { type: String, required: true },
+      output: { type: String }
+    }
+  ]
 });
 
 // Compound index to speed up time-range queries per server

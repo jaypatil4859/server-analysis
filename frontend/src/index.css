@@ -997,3 +997,100 @@ details.collector-guide[open] summary::after {
   font-size: 12px;
 }
 
+/* Monitored Services Section */
+.server-services-section {
+  border-top: 1px solid var(--panel-border);
+  padding-top: 16px;
+  margin-top: 4px;
+}
+
+.services-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.services-title-icon {
+  color: var(--luxury-gold);
+}
+
+.services-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.service-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background-color: rgba(168, 132, 72, 0.02);
+  border: 1px solid rgba(168, 132, 72, 0.04);
+  transition: var(--transition-smooth);
+}
+
+.service-item-row:hover {
+  background-color: rgba(168, 132, 72, 0.04);
+  border-color: rgba(168, 132, 72, 0.08);
+}
+
+.service-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.service-status-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid transparent;
+}
+
+.service-status-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  display: inline-block;
+  background-color: currentColor;
+}
+
+/* Service Badge Status Variants */
+.service-status-badge.ok {
+  color: var(--success-color);
+  background-color: rgba(97, 130, 95, 0.08);
+  border-color: rgba(97, 130, 95, 0.15);
+}
+
+.service-status-badge.warning {
+  color: var(--luxury-gold);
+  background-color: rgba(168, 132, 72, 0.08);
+  border-color: rgba(168, 132, 72, 0.15);
+}
+
+.service-status-badge.critical {
+  color: var(--danger-color);
+  background-color: rgba(184, 113, 88, 0.08);
+  border-color: rgba(184, 113, 88, 0.15);
+}
+
+.service-status-badge.unknown {
+  color: var(--text-muted);
+  background-color: rgba(156, 151, 144, 0.08);
+  border-color: rgba(156, 151, 144, 0.15);
+}
+
