@@ -85,22 +85,26 @@ jobs:
           script: |
             set -e
             cd /var/www/server-analysis
+            echo "── Setting git safe directory ──"
+            sudo git config --global --add safe.directory /var/www/server-analysis || true
+            git config --global --add safe.directory /var/www/server-analysis || true
+
             echo "── Pulling latest code ──"
-            git pull origin main
+            sudo git pull origin main
 
             echo "── Installing backend dependencies ──"
-            cd backend && npm ci --only=production && cd ..
+            cd backend && sudo npm ci --only=production && cd ..
 
             echo "── Building frontend ──"
-            cd frontend && npm ci --legacy-peer-deps && npm run build && cd ..
+            cd frontend && sudo npm ci --legacy-peer-deps && sudo npm run build && cd ..
 
             echo "── Copying frontend dist to web root ──"
             sudo mkdir -p /var/www/server-analysis/frontend/monitoring
             sudo cp -r frontend/dist/* /var/www/server-analysis/frontend/monitoring/
 
             echo "── Reloading PM2 processes ──"
-            pm2 reload ecosystem.config.cjs --update-env
-            pm2 save
+            sudo pm2 reload ecosystem.config.cjs --update-env || pm2 reload ecosystem.config.cjs --update-env
+            sudo pm2 save || pm2 save
 
             echo "── Reloading Nginx ──"
             sudo nginx -t && sudo systemctl reload nginx
