@@ -56,8 +56,8 @@ const SERVERS = [
 
 // Fallback specs lookup table for Nagios (CPU cores, RAM size in GB, Disk size in GB)
 const SERVER_SPECS = {
-  'in31': { cores: 4, ramGB: 16, diskGB: 250 },
-  'in44': { cores: 4, ramGB: 16, diskGB: 250 },
+  'in31': { cores: 8, ramGB: 16, diskGB: 250 },
+  'in44': { cores: 8, ramGB: 16, diskGB: 250 },
   'newmongo': { cores: 4, ramGB: 16, diskGB: 500 },
   'newprod': { cores: 8, ramGB: 16, diskGB: 250 },
   'newprodp1': { cores: 4, ramGB: 16, diskGB: 250 },
@@ -66,7 +66,7 @@ const SERVER_SPECS = {
   'punctualiti-co': { cores: 8, ramGB: 16, diskGB: 250 },
   'rahehamysql': { cores: 8, ramGB: 16, diskGB: 500 },
   'raheja-app': { cores: 4, ramGB: 16, diskGB: 250 },
-  'rahejamongo': { cores: 4, ramGB: 6, diskGB: 500 },
+  'rahejamongo': { cores: 6, ramGB: 6, diskGB: 500 },
   'sgdb': { cores: 8, ramGB: 16, diskGB: 500 },
   'sify-app': { cores: 4, ramGB: 16, diskGB: 250 }
 };
@@ -88,7 +88,8 @@ async function fetchRemoteMetrics(server) {
   const user = server.user || SSH_USER;
   
   // Command to retrieve: CPU cores, Load Average, Memory Info, and Root Disk Space
-  const remoteCmd = "nproc && cat /proc/loadavg && grep -E 'MemTotal|MemAvailable|MemFree|Buffers|Cached' /proc/meminfo && df -B1 / | tail -n 1";
+  // Tries the custom devops command /scpu first
+  const remoteCmd = "C=\\$(/scpu 2>/dev/null || nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo); echo \"\\$C\" && cat /proc/loadavg && grep -E 'MemTotal|MemAvailable|MemFree|Buffers|Cached' /proc/meminfo && df -B1 / | tail -n 1";
   
   let sshCmd = `ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5`;
   if (SSH_KEY_PATH) {
@@ -109,7 +110,9 @@ function parseSshOutput(stdout, server) {
     throw new Error('Incomplete command output returned from remote host.');
   }
 
-  const cores = parseInt(lines[0].trim(), 10);
+  // Parse CPU cores safely, extracting digits in case of text wrapper
+  const coresMatch = lines[0].trim().match(/\d+/);
+  const cores = coresMatch ? parseInt(coresMatch[0], 10) : 4;
   if (isNaN(cores) || cores <= 0) {
     throw new Error('Failed to parse CPU core count.');
   }

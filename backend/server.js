@@ -7,47 +7,52 @@ import laptopRoutes from './routes/laptopRoutes.js';
 
 dotenv.config();
 
-const app = express();
+const app  = express();
 const PORT = process.env.PORT || 3971;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/server_analysis';
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Routes
 app.use('/api/metrics', metricRoutes);
-app.use('/api/laptop', laptopRoutes);
+app.use('/api/laptop',  laptopRoutes);
 
-// Health Check
-app.use('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date() });
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy', timestamp: new Date(), db: mongoose.connection.readyState === 1 ? 'connected' : 'fallback' });
 });
 
-// Database Connection & Server Startup
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`[Server] Running on port ${PORT}`);
 });
 
-mongoose
-  .connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
-  .then(async () => {
-    try {
-      // Perform a lightweight check to verify authentication/authorization status
-      await mongoose.connection.db.listCollections().toArray();
-      console.log('Successfully connected and authenticated to MongoDB');
-    } catch (authError) {
-      console.error('MongoDB Auth Verification Failed:', authError.message);
-      console.warn('--------------------------------------------------------------------------------');
-      console.warn('CRITICAL WARNING: MongoDB requires authentication, but the credentials in');
-      console.warn('MONGODB_URI are missing, incorrect, or missing the correct ?authSource parameter.');
-      console.warn('Falling back to In-Memory database to keep the server alive.');
-      console.warn('Please check your MONGODB_URI environment variable configuration.');
-      console.warn('--------------------------------------------------------------------------------');
-      await mongoose.disconnect();
-    }
-  })
-  .catch((error) => {
-    console.warn('WARNING: MongoDB is not reachable. Using In-Memory fallback database.');
-  });
+// ─── MongoDB connection with automatic reconnect ──────────────────────────────
+const MONGO_RETRY_DELAYS = [3000, 5000, 10000, 20000, 30000]; // backoff steps
+let retryCount = 0;
 
+async function connectMongo() {
+  try {
+    await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+    // Verify auth by listing collections
+    await mongoose.connection.db.listCollections().toArray();
+    console.log('[MongoDB] Connected and authenticated successfully.');
+    retryCount = 0; // reset on success
+  } catch (error) {
+    const delay = MONGO_RETRY_DELAYS[Math.min(retryCount, MONGO_RETRY_DELAYS.length - 1)];
+    retryCount++;
+    console.warn(`[MongoDB] Connection failed: ${error.message}`);
+    console.warn(`[MongoDB] Retrying in ${delay / 1000}s... (attempt ${retryCount})`);
+    setTimeout(connectMongo, delay);
+  }
+}
+
+// Handle disconnection events and auto-reconnect
+mongoose.connection.on('disconnected', () => {
+  console.warn('[MongoDB] Disconnected. Scheduling reconnect...');
+  setTimeout(connectMongo, MONGO_RETRY_DELAYS[0]);
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('[MongoDB] Connection error:', err.message);
+});
+
+connectMongo();

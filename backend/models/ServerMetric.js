@@ -15,8 +15,8 @@ const ServerMetricSchema = new mongoose.Schema({
     required: true,
   },
   ramUsage: {
-    totalBytes: { type: Number, required: true },
-    usedBytes: { type: Number, required: true },
+    totalBytes: { type: Number },
+    usedBytes: { type: Number },
     usagePercent: { type: Number, required: true },
   },
   diskUsage: {

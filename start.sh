@@ -92,16 +92,16 @@ echo -e "  ${GREEN}✓ Environment files ready${RESET}"
 echo -e "${BOLD}[4/5] Installing dependencies...${RESET}"
 
 echo "  Installing backend dependencies..."
-cd backend && npm install --only=production --silent && cd ..
+(cd backend && npm install --only=production --silent)
 echo -e "  ${GREEN}✓ Backend deps installed${RESET}"
 
 echo "  Installing frontend dependencies..."
-cd frontend && npm install --silent && cd ..
+(cd frontend && npm install --legacy-peer-deps --silent)
 echo -e "  ${GREEN}✓ Frontend deps installed${RESET}"
 
 # ── Step 5: Build frontend ────────────────────────────────────────────────────
 echo -e "${BOLD}[5/5] Building frontend for production...${RESET}"
-cd frontend && npm run build && cd ..
+(cd frontend && npm run build)
 echo -e "  ${GREEN}✓ Frontend built → frontend/dist/${RESET}"
 
 # ── Step 6: Start with PM2 ────────────────────────────────────────────────────
