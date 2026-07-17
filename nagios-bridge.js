@@ -1,6 +1,13 @@
-// Nagios Bridge — Server Analysis Dashboard Integration
+// Nagios Bridge — Server Analysis Dashboard Integration (Self-Healing Edition)
 // Queries Nagios statusjson.cgi and pushes real-time metrics to the dashboard backend.
 // All server specs (RAM, disk, CPU cores) are extracted dynamically from Nagios plugin outputs.
+//
+// Self-Healing Features:
+//   - Watchdog timer: force-exits if any poll hangs > 90s (PM2/Docker auto-restarts)
+//   - Uncaught exception + unhandled rejection handlers → graceful exit for PM2 restart
+//   - Orphan cleanup: tells backend to remove hosts that disappeared from Nagios
+//   - Exponential backoff retry on Nagios network errors
+//   - nagiosLastSeen + nagiosStatus in every payload for frontend stale-override
 //
 // Usage:  node nagios-bridge.js
 // Env vars:
@@ -9,7 +16,10 @@
 //   NAGIOS_PASS         Nagios admin password
 //   METRICS_API_URL     Dashboard backend URL     (default: http://localhost:3971/api/metrics)
 //   MONGODB_URI         Direct Mongo fallback URI
-//   POLL_INTERVAL_MS    How often to poll (ms)    (default: 30000)
+//   POLL_INTERVAL_MS    How often to poll (ms)    (default: 20000)
+//   WATCHDOG_TIMEOUT_MS Max ms a poll can run     (default: 90000)
+
+'use strict';
 
 const path = require('path');
 try {
@@ -20,17 +30,30 @@ try {
   dotenv.config({ path: path.join(__dirname, 'backend', '.env') });
 } catch { /* dotenv optional */ }
 
-const NAGIOS_URL        = process.env.NAGIOS_URL        || 'http://217.145.69.228/nagios';
-const NAGIOS_USER       = process.env.NAGIOS_USER       || 'nagiosadmin';
-const NAGIOS_PASS       = process.env.NAGIOS_PASS       || '4z1lO3lXxNa$';
-const DASHBOARD_API_URL = process.env.METRICS_API_URL   || 'http://localhost:3971/api/metrics';
-const POLL_INTERVAL_MS  = parseInt(process.env.POLL_INTERVAL_MS || '30000', 10);
-const MAX_CONCURRENCY   = 5; // max parallel host pushes
+const NAGIOS_URL          = process.env.NAGIOS_URL          || 'http://217.145.69.228/nagios';
+const NAGIOS_USER         = process.env.NAGIOS_USER         || 'nagiosadmin';
+const NAGIOS_PASS         = process.env.NAGIOS_PASS         || '4z1lO3lXxNa$';
+const DASHBOARD_API_URL   = process.env.METRICS_API_URL     || 'http://localhost:3971/api/metrics';
+const POLL_INTERVAL_MS    = parseInt(process.env.POLL_INTERVAL_MS    || '20000', 10);
+const WATCHDOG_TIMEOUT_MS = parseInt(process.env.WATCHDOG_TIMEOUT_MS || '90000', 10);
+const MAX_CONCURRENCY     = 5;
+const MAX_NAGIOS_RETRIES  = 3;
 
-console.log(`[Nagios Bridge] Starting...`);
+// ─── Self-healing: crash-exit on unhandled errors so PM2/Docker restarts ─────
+process.on('uncaughtException', (err) => {
+  console.error(`[FATAL] Uncaught exception — restarting via PM2/Docker:`, err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error(`[FATAL] Unhandled promise rejection — restarting via PM2/Docker:`, reason);
+  process.exit(1);
+});
+
+console.log(`[Nagios Bridge] Starting (self-healing edition)...`);
 console.log(`[Nagios Bridge] Nagios   : ${NAGIOS_URL}`);
 console.log(`[Nagios Bridge] Dashboard: ${DASHBOARD_API_URL}`);
 console.log(`[Nagios Bridge] Interval : ${POLL_INTERVAL_MS}ms`);
+console.log(`[Nagios Bridge] Watchdog : ${WATCHDOG_TIMEOUT_MS}ms`);
 
 // ─── Direct MongoDB fallback ──────────────────────────────────────────────────
 let mongooseInstance = null;
@@ -52,6 +75,7 @@ async function saveToMongoDirectly(payload) {
       const schema = new mongoose.Schema({
         serverId:   { type: String, required: true, index: true },
         serverName: { type: String, required: true },
+        status:     { type: String, default: 'up' },
         cpuUsage:   { type: Number, required: true },
         ramUsage: {
           totalBytes: { type: Number },
@@ -66,9 +90,11 @@ async function saveToMongoDirectly(payload) {
           fiveMin: { type: Number, required: true },
           fifteenMin: { type: Number, required: true }
         },
-        cpuCores:  { type: Number },
-        timestamp: { type: Date, default: Date.now, index: true },
-        services:  [{ name: String, status: String, output: String }]
+        cpuCores:       { type: Number },
+        timestamp:      { type: Date, default: Date.now, index: true },
+        nagiosLastSeen: { type: Date },
+        nagiosStatus:   { type: String, default: 'UP' },
+        services:       [{ name: String, status: String, output: String }]
       });
       schema.index({ serverId: 1, timestamp: -1 });
       ServerMetricModel = mongoose.models.ServerMetric || mongoose.model('ServerMetric', schema);
@@ -84,32 +110,62 @@ async function saveToMongoDirectly(payload) {
 // ─── Nagios HTTP helpers ──────────────────────────────────────────────────────
 const getAuthHeader = () => `Basic ${Buffer.from(`${NAGIOS_USER}:${NAGIOS_PASS}`).toString('base64')}`;
 
+/**
+ * Fetch from Nagios with exponential backoff retry.
+ * Retries up to MAX_NAGIOS_RETRIES times on network error.
+ */
+async function fetchWithRetry(url, retries = MAX_NAGIOS_RETRIES) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: { Authorization: getAuthHeader() },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.result?.type_code !== 0) throw new Error(`Nagios error: ${data.result?.message}`);
+      return data;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries) {
+        const backoff = Math.min(1000 * Math.pow(2, attempt), 8000);
+        console.warn(`[Nagios] Attempt ${attempt + 1} failed (${err.message}). Retrying in ${backoff}ms...`);
+        await new Promise(r => setTimeout(r, backoff));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function fetchServiceList() {
   try {
-    const url = `${NAGIOS_URL}/cgi-bin/statusjson.cgi?query=servicelist&details=true&formatoptions=enumerate`;
-    const res  = await fetch(url, { headers: { Authorization: getAuthHeader() }, signal: AbortSignal.timeout(15000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (data.result?.type_code !== 0) throw new Error(`Nagios error: ${data.result?.message}`);
+    const url  = `${NAGIOS_URL}/cgi-bin/statusjson.cgi?query=servicelist&details=true&formatoptions=enumerate`;
+    const data = await fetchWithRetry(url);
     return data.data.servicelist || {};
   } catch (err) {
-    console.error(`[Nagios] Failed to fetch service list:`, err.message);
-    return {};
+    console.error(`[Nagios] Failed to fetch service list after retries:`, err.message);
+    return null; // null signals a hard failure — don't run cleanup
+  }
+}
+
+async function fetchHostList() {
+  try {
+    const url  = `${NAGIOS_URL}/cgi-bin/statusjson.cgi?query=hostlist&formatoptions=enumerate`;
+    const data = await fetchWithRetry(url);
+    return data.data.hostlist || {};
+  } catch (err) {
+    console.error(`[Nagios] Failed to fetch host list after retries:`, err.message);
+    return null;
   }
 }
 
 // ─── Metric parsers — extract real values from plugin output ─────────────────
 
-/**
- * Parse CPU usage percentage directly from Nagios plugin output.
- * Returns a percentage 0-100.
- */
 function parseCpuPercent(output) {
-  // Try "CPU Usage: 45.2%" or "cpu: 45.2%"
   let m = output.match(/cpu\s*(?:usage)?:?\s*([\d.]+)\s*%/i);
   if (m) return Math.min(100, parseFloat(m[1]));
 
-  // Try "load average: 1.5, 1.2, 0.9" with optional core count "4 CPUs"
   const loadM = output.match(/load average:\s*([\d.]+)/i);
   const coreM = output.match(/(\d+)\s*cpu/i) || output.match(/(\d+)\s*core/i) || output.match(/(\d+)\s*processor/i);
   if (loadM) {
@@ -118,42 +174,29 @@ function parseCpuPercent(output) {
     if (cores && cores > 0) {
       return Math.min(100, parseFloat(((load / cores) * 100).toFixed(1)));
     }
-    // Without core count, use load directly as utilisation proxy (capped at 100)
-    return Math.min(100, parseFloat((load * 20).toFixed(1))); // conservative: assume 5-core equivalent
+    return Math.min(100, parseFloat((load * 20).toFixed(1)));
   }
 
-  // Try "CPU load is at 45%"
   m = output.match(/CPU load(?:\s+is)?\s+at\s+([\d.]+)/i);
   if (m) return Math.min(100, parseFloat(m[1]));
 
   return null;
 }
 
-/**
- * Parse load average triple from plugin output.
- */
 function parseLoadAverage(output) {
   const m = output.match(/load average:\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)/i);
   if (m) return { oneMin: parseFloat(m[1]), fiveMin: parseFloat(m[2]), fifteenMin: parseFloat(m[3]) };
   return null;
 }
 
-/**
- * Parse CPU core count from any plugin output line.
- */
 function parseCpuCores(output) {
   const m = output.match(/(\d+)\s*(?:cpu|core|processor|logical)/i);
   return m ? parseInt(m[1]) : null;
 }
 
-/**
- * Parse RAM from "Mem:" style free/vmstat output (returned by memory check plugin).
- * Returns { totalBytes, usedBytes, usagePercent } or null.
- */
 function parseMemoryDetailed(pluginOutput, longPluginOutput) {
   const fullText = `${pluginOutput}\n${longPluginOutput || ''}`.trim();
 
-  // Prefer "Mem: total used" table row
   const memLine = fullText.split('\n').find(l => l.trim().startsWith('Mem:'));
   if (memLine) {
     const parts = memLine.trim().split(/\s+/);
@@ -170,7 +213,6 @@ function parseMemoryDetailed(pluginOutput, longPluginOutput) {
     }
   }
 
-  // Try "Total: 16384 MB  Used: 8192 MB" style
   const totalM = fullText.match(/total:\s*([\d.]+)\s*(mb|gb|kb)/i);
   const usedM  = fullText.match(/used:\s*([\d.]+)\s*(mb|gb|kb)/i);
   if (totalM && usedM) {
@@ -193,20 +235,12 @@ function parseMemoryDetailed(pluginOutput, longPluginOutput) {
   return null;
 }
 
-/**
- * Parse RAM usage percentage from simple output like "Memory: 72.5% used".
- */
 function parseMemoryPercent(output) {
   const m = output.match(/([\d.]+)\s*%/);
   return m ? parseFloat(m[1]) : null;
 }
 
-/**
- * Parse total RAM bytes from any plugin output.
- * Looks for patterns like "16384 MB", "16 GB", "16.0GB".
- */
 function parseTotalRamBytes(output) {
-  // "Total: 16384 MB" or "16384MB total"
   const m = output.match(/(\d+(?:\.\d+)?)\s*(GB|GiB|MB|MiB)\s*(?:total|ram|memory)?/i) ||
             output.match(/(?:total|ram|memory)\s*:?\s*(\d+(?:\.\d+)?)\s*(GB|GiB|MB|MiB)/i);
   if (m) {
@@ -218,17 +252,11 @@ function parseTotalRamBytes(output) {
   return null;
 }
 
-/**
- * Parse disk usage from plugin output.
- * Returns { totalBytes, usedBytes, usagePercent } or null.
- */
 function parseDiskUsage(output) {
-  // Percent
   const pctM = output.match(/([\d.]+)\s*%/);
   if (!pctM) return null;
   const pct = parseFloat(pctM[1]);
 
-  // Total size
   const totalM = output.match(/(?:total|size)[:=]?\s*([\d.]+)\s*(GB|GiB|MB|MiB|TB|TiB)/i) ||
                  output.match(/([\d.]+)\s*(GB|GiB|MB|MiB|TB|TiB)\s+total/i);
   let totalBytes = null;
@@ -240,7 +268,7 @@ function parseDiskUsage(output) {
     else if (u.startsWith('m')) totalBytes = Math.round(n * 1024 * 1024);
   }
 
-  if (!totalBytes) return { usagePercent: pct }; // partial result — caller handles
+  if (!totalBytes) return { usagePercent: pct };
   return {
     totalBytes,
     usedBytes:    Math.round((pct / 100) * totalBytes),
@@ -262,11 +290,80 @@ async function runWithConcurrency(tasks, concurrency) {
   return results;
 }
 
+function findServiceByKeywords(hostServices, keywords, excludeKeywords = []) {
+  const keys = Object.keys(hostServices);
+  const matchedKey = keys.find(k => {
+    const lowerK = k.toLowerCase();
+    const hasKeyword = keywords.some(kw => lowerK.includes(kw));
+    const hasExclude = excludeKeywords.some(ex => lowerK.includes(ex));
+    return hasKeyword && !hasExclude;
+  });
+  return matchedKey ? hostServices[matchedKey] : null;
+}
+
+function isNumeric(val) {
+  return typeof val === 'number' && !isNaN(val) && isFinite(val);
+}
+
+/**
+ * Decode Nagios numeric host status to string.
+ * Nagios statusjson: 2=UP, 4=DOWN, 8=UNREACHABLE, 1=PENDING
+ */
+function decodeNagiosHostStatus(rawStatus) {
+  if (typeof rawStatus === 'number') {
+    if (rawStatus === 2) return 'UP';
+    if (rawStatus === 4) return 'DOWN';
+    if (rawStatus === 8) return 'UNREACHABLE';
+    if (rawStatus === 1) return 'PENDING';
+    return 'UNKNOWN';
+  }
+  const s = String(rawStatus).toUpperCase();
+  return ['UP', 'DOWN', 'UNREACHABLE', 'PENDING'].includes(s) ? s : 'UP';
+}
+
+// ─── Orphan cleanup ───────────────────────────────────────────────────────────
+async function reportOrphans(activeHostIds) {
+  try {
+    const res = await fetch(`${DASHBOARD_API_URL}/cleanup-orphans`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        activeHostIds,
+        maxAgeMs: POLL_INTERVAL_MS * 3, // remove after 3 missed polls
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const result = await res.json();
+      if (result.removed > 0) {
+        console.log(`[Cleanup] Removed ${result.removed} orphan server(s): ${(result.orphanIds || []).join(', ')}`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[Cleanup] Orphan cleanup failed (non-fatal):`, err.message);
+  }
+}
+
 // ─── Main poll function ───────────────────────────────────────────────────────
 async function parseAndSendMetrics() {
   console.log(`\n[Nagios Bridge] --- Polling ---`);
-  const services = await fetchServiceList();
-  const hosts    = Object.keys(services);
+  const pollStart = Date.now();
+
+  const [services, hostStates] = await Promise.all([
+    fetchServiceList(),
+    fetchHostList()
+  ]);
+
+  // If BOTH calls returned null, Nagios is unreachable — skip this cycle entirely.
+  if (services === null && hostStates === null) {
+    console.error(`[Nagios Bridge] Nagios unreachable after retries — skipping poll cycle.`);
+    return;
+  }
+
+  const safeServices   = services   || {};
+  const safeHostStates = hostStates || {};
+
+  const hosts = Array.from(new Set([...Object.keys(safeServices), ...Object.keys(safeHostStates)]));
 
   if (hosts.length === 0) {
     console.log(`[Nagios Bridge] No hosts found or Nagios returned empty data.`);
@@ -274,12 +371,26 @@ async function parseAndSendMetrics() {
   }
 
   console.log(`[Nagios Bridge] Found ${hosts.length} hosts.`);
+  const nagiosNowISO    = new Date().toISOString();
+  const activeHostIds   = [];
 
   const tasks = hosts.map(hostName => async () => {
-    const sanitizedId  = hostName.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
-    const hostServices = services[hostName] || {};
+    const sanitizedId   = hostName.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+    const hostServices  = safeServices[hostName] || {};
+    const hostRawState  = safeHostStates[hostName];
+    const nagiosStatus  = hostRawState !== undefined
+      ? decodeNagiosHostStatus(typeof hostRawState === 'object' ? hostRawState.status : hostRawState)
+      : 'UP';
 
-    // Collect all service statuses (passed through to frontend as-is from Nagios)
+    // Map Nagios status to dashboard status
+    const dashboardStatus = nagiosStatus === 'UP' ? 'up'
+      : nagiosStatus === 'DOWN'        ? 'down'
+      : nagiosStatus === 'UNREACHABLE' ? 'unreachable'
+      : 'up';
+
+    activeHostIds.push(sanitizedId);
+
+    // Collect all service statuses
     const servicesList = Object.entries(hostServices)
       .filter(([, sDetails]) => sDetails != null)
       .map(([serviceDesc, sDetails]) => ({
@@ -288,40 +399,42 @@ async function parseAndSendMetrics() {
         output: sDetails.plugin_output || ''
       }));
 
+    // Prepend host status as a virtual service
+    servicesList.unshift({
+      name:   'Host Status',
+      status: nagiosStatus === 'UP' ? 'OK' : 'CRITICAL',
+      output: `Nagios host check: ${nagiosStatus}`
+    });
+
     // ── CPU & Load Average ──────────────────────────────────────────────────
     let parsedCpuPct  = null;
     let parsedLoad    = null;
     let parsedCores   = null;
 
-    // Check 'CPU check' service
-    const cpuSvc = hostServices['CPU check'] || hostServices['CPU Check'] || hostServices['cpu check'];
+    const cpuSvc = findServiceByKeywords(hostServices, ['cpu', 'processor', 'util'], ['usage', 'load average']);
     if (cpuSvc?.plugin_output) {
       parsedCores  = parsedCores || parseCpuCores(cpuSvc.plugin_output);
       parsedLoad   = parsedLoad  || parseLoadAverage(cpuSvc.plugin_output);
       parsedCpuPct = parseCpuPercent(cpuSvc.plugin_output);
     }
 
-    // Check 'Load Average' service
-    const loadSvc = hostServices['Load Average'] || hostServices['load average'] || hostServices['Load'];
+    const loadSvc = findServiceByKeywords(hostServices, ['load average', 'load']) || findServiceByKeywords(hostServices, ['uptime']);
     if (loadSvc?.plugin_output) {
       parsedCores = parsedCores || parseCpuCores(loadSvc.plugin_output);
       const load  = parseLoadAverage(loadSvc.plugin_output);
       if (load) {
         parsedLoad = load;
         if (parsedCpuPct === null) {
-          // Derive CPU% from load + cores (if we have cores)
           if (parsedCores) {
             parsedCpuPct = Math.min(100, parseFloat(((load.oneMin / parsedCores) * 100).toFixed(1)));
           } else {
-            // No core info — use load as a heuristic (capped)
             parsedCpuPct = Math.min(100, parseFloat((load.oneMin * 20).toFixed(1)));
           }
         }
       }
     }
 
-    // Check 'Uptime' service as a load fallback
-    const uptimeSvc = hostServices['Uptime'] || hostServices['uptime'];
+    const uptimeSvc = findServiceByKeywords(hostServices, ['uptime']);
     if (parsedLoad === null && uptimeSvc?.plugin_output) {
       parsedCores = parsedCores || parseCpuCores(uptimeSvc.plugin_output);
       const load  = parseLoadAverage(uptimeSvc.plugin_output);
@@ -336,13 +449,12 @@ async function parseAndSendMetrics() {
     // ── Memory ─────────────────────────────────────────────────────────────
     let parsedRam = null;
 
-    const memSvc = hostServices['memory check'] || hostServices['Memory Check'] ||
-                   hostServices['Memory']        || hostServices['memory'];
+    const memSvc = findServiceByKeywords(hostServices, ['memory check', 'memory', 'mem'], ['usage']);
     if (memSvc) {
       parsedRam = parseMemoryDetailed(memSvc.plugin_output || '', memSvc.long_plugin_output || '');
     }
 
-    const memUsageSvc = hostServices['Memory Usage'] || hostServices['memory usage'];
+    const memUsageSvc = findServiceByKeywords(hostServices, ['memory usage', 'ram', 'mem usage']);
     if (!parsedRam && memUsageSvc?.plugin_output) {
       const pct  = parseMemoryPercent(memUsageSvc.plugin_output);
       const total = parseTotalRamBytes(memUsageSvc.plugin_output) ||
@@ -354,24 +466,19 @@ async function parseAndSendMetrics() {
           usagePercent: pct
         };
       } else if (pct !== null) {
-        parsedRam = {
-          usagePercent: pct
-        };
+        parsedRam = { usagePercent: pct };
       }
     }
 
     // ── Disk ───────────────────────────────────────────────────────────────
     let parsedDisk = null;
 
-    const diskSvc = hostServices['Disk Space']  || hostServices['Disk Usage'] ||
-                    hostServices['disk space']   || hostServices['disk usage']  ||
-                    hostServices['Disk']         || hostServices['disk'];
+    const diskSvc = findServiceByKeywords(hostServices, ['disk', 'space', 'storage', '/']);
     if (diskSvc?.plugin_output) {
       const d = parseDiskUsage(diskSvc.plugin_output);
       if (d?.totalBytes) {
         parsedDisk = d;
       } else if (d?.usagePercent !== undefined) {
-        // Try long output for total size
         const total = diskSvc.long_plugin_output ? parseTotalRamBytes(diskSvc.long_plugin_output) : null;
         if (total) {
           parsedDisk = {
@@ -380,39 +487,54 @@ async function parseAndSendMetrics() {
             usagePercent: d.usagePercent
           };
         } else {
-          parsedDisk = {
-            usagePercent: d.usagePercent
-          };
+          parsedDisk = { usagePercent: d.usagePercent };
         }
       }
     }
 
-    // ── Build payload (only real data — skip if critical fields missing) ────
-    if (parsedCpuPct === null && parsedLoad === null) {
-      console.warn(`[${hostName}] No CPU/Load data found — skipping.`);
-      return;
+    // ── Build payload (self-healing fallbacks) ─────────────────────────────
+    const cpuUsageVal = isNumeric(parsedCpuPct) ? parseFloat(parsedCpuPct.toFixed(1)) : 0;
+
+    let ramUsageVal = { totalBytes: 0, usedBytes: 0, usagePercent: 0 };
+    if (parsedRam) {
+      ramUsageVal = {
+        totalBytes:   isNumeric(parsedRam.totalBytes)   ? parsedRam.totalBytes : undefined,
+        usedBytes:    isNumeric(parsedRam.usedBytes)    ? parsedRam.usedBytes  : undefined,
+        usagePercent: isNumeric(parsedRam.usagePercent) ? parseFloat(parsedRam.usagePercent.toFixed(1)) : 0
+      };
     }
-    if (!parsedRam) {
-      console.warn(`[${hostName}] No RAM data found — skipping.`);
-      return;
+
+    let loadAverageVal = { oneMin: 0, fiveMin: 0, fifteenMin: 0 };
+    if (parsedLoad) {
+      loadAverageVal = {
+        oneMin:     isNumeric(parsedLoad.oneMin)     ? parseFloat(parsedLoad.oneMin.toFixed(2))     : 0,
+        fiveMin:    isNumeric(parsedLoad.fiveMin)    ? parseFloat(parsedLoad.fiveMin.toFixed(2))    : 0,
+        fifteenMin: isNumeric(parsedLoad.fifteenMin) ? parseFloat(parsedLoad.fifteenMin.toFixed(2)) : 0
+      };
     }
 
     const payload = {
-      serverId:    sanitizedId,
-      serverName:  hostName,
-      cpuUsage:    parseFloat((parsedCpuPct ?? 0).toFixed(1)),
-      ramUsage:    parsedRam,
-      loadAverage: {
-        oneMin:     parseFloat((parsedLoad?.oneMin     ?? 0).toFixed(2)),
-        fiveMin:    parseFloat((parsedLoad?.fiveMin    ?? 0).toFixed(2)),
-        fifteenMin: parseFloat((parsedLoad?.fifteenMin ?? 0).toFixed(2))
-      },
-      cpuCores:  parsedCores || undefined,
-      timestamp: new Date().toISOString(),
-      services:  servicesList
+      serverId:       sanitizedId,
+      serverName:     hostName,
+      status:         dashboardStatus,
+      cpuUsage:       cpuUsageVal,
+      ramUsage:       ramUsageVal,
+      loadAverage:    loadAverageVal,
+      cpuCores:       isNumeric(parsedCores) ? parsedCores : undefined,
+      timestamp:      nagiosNowISO,
+      // ── Nagios ground-truth (critical for stale-override in frontend) ──
+      nagiosLastSeen: nagiosNowISO,
+      nagiosStatus,
+      services:       servicesList
     };
 
-    if (parsedDisk) payload.diskUsage = parsedDisk;
+    if (parsedDisk) {
+      payload.diskUsage = {
+        totalBytes:   isNumeric(parsedDisk.totalBytes)   ? parsedDisk.totalBytes : undefined,
+        usedBytes:    isNumeric(parsedDisk.usedBytes)    ? parsedDisk.usedBytes  : undefined,
+        usagePercent: isNumeric(parsedDisk.usagePercent) ? parseFloat(parsedDisk.usagePercent.toFixed(1)) : 0
+      };
+    }
 
     // ── Push to backend API ─────────────────────────────────────────────────
     try {
@@ -424,9 +546,9 @@ async function parseAndSendMetrics() {
       });
 
       if (res.ok) {
-        const ramStr  = `${parsedRam.usagePercent}%` + (parsedRam.totalBytes ? ` (${(parsedRam.totalBytes / 1073741824).toFixed(1)}GB total)` : '');
-        const diskStr = parsedDisk ? ` Disk: ${parsedDisk.usagePercent}%` : '';
-        console.log(`[OK] ${hostName} — CPU: ${payload.cpuUsage}% Load: ${payload.loadAverage.oneMin} RAM: ${ramStr}${diskStr}`);
+        const ramStr  = `${ramUsageVal.usagePercent}%` + (ramUsageVal.totalBytes ? ` (${(ramUsageVal.totalBytes / 1073741824).toFixed(1)}GB)` : '');
+        const diskStr = payload.diskUsage ? ` Disk: ${payload.diskUsage.usagePercent}%` : '';
+        console.log(`[OK] ${hostName} [${nagiosStatus}] — CPU: ${payload.cpuUsage}% Load: ${payload.loadAverage.oneMin} RAM: ${ramStr}${diskStr}`);
       } else {
         const err = await res.text();
         console.error(`[WARN] ${hostName} HTTP ${res.status}: ${err}`);
@@ -439,9 +561,44 @@ async function parseAndSendMetrics() {
   });
 
   await runWithConcurrency(tasks, MAX_CONCURRENCY);
-  console.log(`[Nagios Bridge] --- Done ---`);
+
+  // ── Orphan cleanup: tell backend which hosts are alive in Nagios ───────────
+  if (activeHostIds.length > 0) {
+    await reportOrphans(activeHostIds);
+  }
+
+  const elapsed = Date.now() - pollStart;
+  console.log(`[Nagios Bridge] --- Done (${elapsed}ms for ${hosts.length} hosts) ---`);
 }
 
-// ─── Poll loop ────────────────────────────────────────────────────────────────
-parseAndSendMetrics();
-setInterval(parseAndSendMetrics, POLL_INTERVAL_MS);
+// ─── Watchdog-wrapped poll loop ───────────────────────────────────────────────
+// If a poll cycle hangs longer than WATCHDOG_TIMEOUT_MS, force-exit so PM2 restarts.
+let pollRunning = false;
+let watchdogTimer = null;
+
+async function safePoll() {
+  if (pollRunning) {
+    console.warn(`[Nagios Bridge] Previous poll still running — skipping this cycle.`);
+    return;
+  }
+  pollRunning = true;
+
+  // Set watchdog
+  watchdogTimer = setTimeout(() => {
+    console.error(`[WATCHDOG] Poll exceeded ${WATCHDOG_TIMEOUT_MS}ms — forcing restart.`);
+    process.exit(1);
+  }, WATCHDOG_TIMEOUT_MS);
+
+  try {
+    await parseAndSendMetrics();
+  } catch (err) {
+    console.error(`[Nagios Bridge] Poll error:`, err.message);
+  } finally {
+    clearTimeout(watchdogTimer);
+    pollRunning = false;
+  }
+}
+
+// ─── Start ────────────────────────────────────────────────────────────────────
+safePoll();
+setInterval(safePoll, POLL_INTERVAL_MS);

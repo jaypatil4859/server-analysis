@@ -57,6 +57,11 @@ export default function App() {
   const [laptopTab,        setLaptopTab]       = useState('battery');
   const [selectedLaptopId, setSelectedLaptopId]= useState(null);
 
+  // Nagios live status (direct Nagios query — source of truth for up/down)
+  const [nagiosLiveMap,  setNagiosLiveMap]  = useState({}); // { hostName -> 'UP'|'DOWN'|... }
+  const [nagiosLiveOk,   setNagiosLiveOk]   = useState(null); // null=loading, true=ok, false=error
+  const [bridgeHealth,   setBridgeHealth]   = useState(null); // bridge heartbeat info
+
   // Global state
   const [loading,     setLoading]    = useState(true);
   const [error,       setError]      = useState(null);
@@ -95,6 +100,32 @@ export default function App() {
       setAlerts([]);
     } catch { setAlerts([]); }
   };
+
+  // ─── Nagios Live fetch (direct Nagios status query — bypasses bridge/MongoDB) ──
+  // This is the permanent fix for the "Stale" bug: even if the bridge is lagging,
+  // we can query Nagios directly and know if a host is actually UP or DOWN.
+  const fetchNagiosLive = useCallback(async () => {
+    try {
+      const res = await fetch(`${getApiBase()}/nagios-live`, { signal: AbortSignal.timeout(15000) }).catch(() => null);
+      if (!res?.ok) { setNagiosLiveOk(false); return; }
+      const data = await res.json();
+      if (!data.ok) { setNagiosLiveOk(false); return; }
+      const map = {};
+      (data.hosts || []).forEach(h => { map[h.hostName] = h.nagiosStatus; });
+      setNagiosLiveMap(map);
+      setNagiosLiveOk(true);
+    } catch {
+      setNagiosLiveOk(false);
+    }
+  }, []);
+
+  // ─── Bridge health check ──────────────────────────────────────────────────────
+  const fetchBridgeHealth = useCallback(async () => {
+    try {
+      const res = await fetch(`${getApiBase()}/nagios-health`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
+      if (res?.ok) setBridgeHealth(await res.json());
+    } catch { /* non-fatal */ }
+  }, []);
 
   // ─── Data processing helpers ─────────────────────────────────────────────────
   const processRamHistory = (raw) => {
@@ -270,6 +301,33 @@ export default function App() {
     if (viewMode === 'ssl' && sslData.length === 0) fetchSslData();
   }, [viewMode, sslData.length, fetchSslData]);
 
+  // ─── Nagios Live polling (every 15s — independent of bridge) ─────────────────
+  useEffect(() => {
+    fetchNagiosLive();
+    const nagiosInterval = setInterval(fetchNagiosLive, 15_000);
+    return () => clearInterval(nagiosInterval);
+  }, [fetchNagiosLive]);
+
+  // ─── Bridge health polling (every 30s) ────────────────────────────────────────
+  useEffect(() => {
+    fetchBridgeHealth();
+    const healthInterval = setInterval(fetchBridgeHealth, 30_000);
+    return () => clearInterval(healthInterval);
+  }, [fetchBridgeHealth]);
+
+  // ─── Tab focus auto-refresh — instantly refresh when user returns to tab ──────
+  // Fixes the issue where users see stale data after coming back to the dashboard.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        fetchLiveData(true);
+        fetchNagiosLive();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [fetchLiveData, fetchNagiosLive]);
+
   // ─── Derived values ───────────────────────────────────────────────────────────
   const activeCriticalAlerts = alerts.filter(a => !a.resolved);
   const activeLaptop = laptops.find(l => l.laptopId === selectedLaptopId) || laptops[0] || null;
@@ -391,6 +449,36 @@ export default function App() {
             )}
           </div>
 
+          {/* Nagios Live indicator */}
+          {nagiosLiveOk === true && (
+            <div title="Nagios direct connection active — status is real-time" style={{
+              display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600,
+              color: 'var(--success)', background: 'rgba(34,197,94,0.1)',
+              border: '1px solid rgba(34,197,94,0.2)', borderRadius: 6, padding: '4px 8px'
+            }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)', display: 'inline-block', animation: 'pulse-anim 2s infinite' }} />
+              Nagios Live ✓
+            </div>
+          )}
+          {nagiosLiveOk === false && (
+            <div title="Cannot reach Nagios directly — using DB data only" style={{
+              display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600,
+              color: 'var(--warning)', background: 'rgba(245,158,11,0.1)',
+              border: '1px solid rgba(245,158,11,0.2)', borderRadius: 6, padding: '4px 8px'
+            }}>
+              ⚠ Nagios Unreachable
+            </div>
+          )}
+          {/* Bridge health indicator */}
+          {bridgeHealth && bridgeHealth.bridge.isStale && (
+            <div title={`Bridge last polled ${bridgeHealth.bridge.secondsSinceLastPoll}s ago — may be restarting`} style={{
+              display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600,
+              color: 'var(--warning)', background: 'rgba(245,158,11,0.1)',
+              border: '1px solid rgba(245,158,11,0.2)', borderRadius: 6, padding: '4px 8px'
+            }}>
+              ⚠ Bridge Stale ({Math.floor((bridgeHealth.bridge.secondsSinceLastPoll || 0) / 60)}m)
+            </div>
+          )}
           <div className="status-pill">
             <span className="status-dot pulse" />
             Live
@@ -398,7 +486,7 @@ export default function App() {
           <span style={{ fontSize:12, color:'var(--text-3)' }}>
             {lastUpdated.toLocaleTimeString()}
           </span>
-          <button className="btn icon-only" onClick={() => fetchLiveData()} title="Refresh">
+          <button className="btn icon-only" onClick={() => { fetchLiveData(); fetchNagiosLive(); }} title="Refresh">
             <RefreshCw size={13} className={loading ? 'spin' : ''} />
           </button>
         </div>
@@ -470,14 +558,28 @@ export default function App() {
           ) : (
             <>
               <div className="section-title">
-                <Server size={12} /> Cluster — {servers.length} server{servers.length !== 1 ? 's' : ''} online
+                <Server size={12} /> Cluster — {servers.filter(s => {
+                  // Use Nagios live as override: if Nagios says UP, count as online
+                  const nagiosUp = nagiosLiveMap[s.serverName] === 'UP';
+                  const sStale = !nagiosUp && (Date.now() - new Date(s.timestamp) > 5 * 60 * 1000);
+                  return !sStale && s.status !== 'down' && nagiosLiveMap[s.serverName] !== 'DOWN';
+                }).length} / {servers.length} online
               </div>
               <div className="servers-grid">
                 {servers.map(server => {
-                  const isStale     = Date.now() - new Date(server.timestamp) > 3 * 60 * 1000; // 3 min
-                  const isOverloaded= server.cpuUsage >= 90 || server.ramUsage.usagePercent >= 90;
-                  const secAgo      = Math.max(0, Math.floor((Date.now() - new Date(server.timestamp)) / 1000));
-                  const timeAgo     = secAgo < 60 ? `${secAgo}s ago` : `${Math.floor(secAgo/60)}m ago`;
+                  // ── Stale detection with Nagios-live override ──────────────────────
+                  // Core fix: if Nagios says UP, NEVER mark as Stale — even if MongoDB
+                  // timestamp is old. MongoDB/bridge data lags; Nagios is the truth.
+                  const nagiosStatus  = nagiosLiveMap[server.serverName]; // 'UP'|'DOWN'|undefined
+                  const nagiosConfirmsUp = nagiosStatus === 'UP';
+                  const nagiosConfirmsDown = nagiosStatus === 'DOWN' || nagiosStatus === 'UNREACHABLE';
+                  // Only mark stale if: Nagios doesn't say UP AND MongoDB data > 5 min old
+                  const dbAge = Date.now() - new Date(server.timestamp);
+                  const isStale = !nagiosConfirmsUp && dbAge > 5 * 60 * 1000; // 5 min (was 3 min)
+                  const isDown  = nagiosConfirmsDown || server.status === 'down';
+                  const isOverloaded = server.cpuUsage >= 90 || server.ramUsage.usagePercent >= 90;
+                  const secAgo  = Math.max(0, Math.floor(dbAge / 1000));
+                  const timeAgo = secAgo < 60 ? `${secAgo}s ago` : `${Math.floor(secAgo/60)}m ago`;
 
                   const cpuColor  = server.cpuUsage >= 90 ? 'danger' : 'cpu';
                   const ramColor  = server.ramUsage.usagePercent >= 90 ? 'danger' : 'ram';
@@ -497,9 +599,20 @@ export default function App() {
                           )}
                         </div>
                         <div className="server-status">
-                          <span className={`status-label ${isStale ? 'stale' : 'online'}`}>
-                            {isStale ? 'Stale' : 'Online'}
+                          <span className={`status-label ${isStale ? 'stale' : (isDown ? 'down' : 'online')}`}>
+                            {isStale ? 'Stale' : (isDown ? 'Down' : 'Online')}
                           </span>
+                          {nagiosStatus && (
+                            <span title={`Nagios live: ${nagiosStatus}`} style={{
+                              fontSize: 9, fontWeight: 700, letterSpacing: '0.04em',
+                              color: nagiosStatus === 'UP' ? 'var(--success)' : 'var(--danger)',
+                              background: nagiosStatus === 'UP' ? 'rgba(34,197,94,0.12)' : 'rgba(220,38,38,0.12)',
+                              border: `1px solid ${nagiosStatus === 'UP' ? 'rgba(34,197,94,0.25)' : 'rgba(220,38,38,0.25)'}`,
+                              borderRadius: 4, padding: '1px 5px', marginLeft: 2
+                            }}>
+                              ⬡ {nagiosStatus}
+                            </span>
+                          )}
                           <span className="status-time">{timeAgo}</span>
                         </div>
                       </div>

@@ -19,6 +19,15 @@ let inMemoryAlerts  = [];
 const ALERT_THROTTLE_MS = 5 * 60 * 1000;
 const lastAlertedTimes  = {};
 
+// ─── Bridge Heartbeat (updated on every POST /api/metrics) ───────────────────
+// Used by /nagios-health and frontend to detect bridge staleness.
+const bridgeHeartbeat = {
+  lastPollAt:    null,   // Date — when bridge last posted metrics
+  lastPollHosts: 0,      // how many hosts were reported in last poll
+  pollCount:     0,      // total successful polls since server start
+  consecutiveErrors: 0,  // error streaks
+};
+
 // Cleanup stale alert throttle entries every hour
 setInterval(() => {
   const cutoff = Date.now() - 60 * 60 * 1000;
@@ -36,6 +45,26 @@ setInterval(() => {
 
 // Helper to check MongoDB connection
 const isMongoConnected = () => mongoose.connection.readyState === 1;
+
+// ─── Nagios direct-fetch helpers (used by /nagios-live and /cleanup-orphans) ──
+const NAGIOS_URL  = process.env.NAGIOS_URL  || 'http://217.145.69.228/nagios';
+const NAGIOS_USER = process.env.NAGIOS_USER || 'nagiosadmin';
+const NAGIOS_PASS = process.env.NAGIOS_PASS || '';
+
+const nagiosAuthHeader = () =>
+  `Basic ${Buffer.from(`${NAGIOS_USER}:${NAGIOS_PASS}`).toString('base64')}`;
+
+async function fetchNagiosData(endpoint) {
+  const url = `${NAGIOS_URL}/cgi-bin/${endpoint}`;
+  const res = await fetch(url, {
+    headers: { Authorization: nagiosAuthHeader() },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`Nagios HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.result?.type_code !== 0) throw new Error(`Nagios error: ${data.result?.message}`);
+  return data;
+}
 
 // ─── Alert Logging ───────────────────────────────────────────────────────────
 const logAlertToFile = async (alert) => {
@@ -102,49 +131,60 @@ const triggerAlertNotifications = async (alert) => {
 // ─── 1. POST /api/metrics — Ingest metrics from Nagios bridge ────────────────
 router.post('/', async (req, res) => {
   try {
-    const { serverId, serverName, cpuUsage, ramUsage, loadAverage, cpuCores, diskUsage, timestamp, services } = req.body;
+    const {
+      serverId, serverName, status, cpuUsage, ramUsage,
+      loadAverage, cpuCores, diskUsage, timestamp, services,
+      nagiosLastSeen, nagiosStatus,
+    } = req.body;
 
-    if (!serverId || !serverName || cpuUsage === undefined || cpuUsage === null || !ramUsage || !loadAverage) {
+    if (!serverId || !serverName) {
       return res.status(400).json({ error: 'Missing required metrics fields.' });
     }
 
-    const parsedCpu    = parseFloat(cpuUsage);
-    const parsedRamPct = parseFloat(ramUsage.usagePercent);
-    const parsedRamTotal = ramUsage.totalBytes !== undefined && ramUsage.totalBytes !== null ? parseInt(ramUsage.totalBytes) : undefined;
-    const parsedRamUsed  = ramUsage.usedBytes !== undefined && ramUsage.usedBytes !== null ? parseInt(ramUsage.usedBytes) : undefined;
-    const parsedLoad1m   = parseFloat(loadAverage.oneMin);
-    const parsedLoad5m   = parseFloat(loadAverage.fiveMin);
-    const parsedLoad15m  = parseFloat(loadAverage.fifteenMin);
-
-    if ([parsedCpu, parsedRamPct, parsedLoad1m, parsedLoad5m, parsedLoad15m].some(isNaN)) {
-      return res.status(400).json({ error: 'Invalid metrics: numeric values cannot be NaN.' });
-    }
+    const parsedCpu    = (cpuUsage !== undefined && cpuUsage !== null && !isNaN(parseFloat(cpuUsage))) ? parseFloat(cpuUsage) : 0;
+    const ramPctInput  = ramUsage?.usagePercent;
+    const parsedRamPct = (ramPctInput !== undefined && ramPctInput !== null && !isNaN(parseFloat(ramPctInput))) ? parseFloat(ramPctInput) : 0;
+    const parsedRamTotal = (ramUsage?.totalBytes !== undefined && ramUsage?.totalBytes !== null && !isNaN(parseInt(ramUsage.totalBytes))) ? parseInt(ramUsage.totalBytes) : undefined;
+    const parsedRamUsed  = (ramUsage?.usedBytes !== undefined && ramUsage?.usedBytes !== null && !isNaN(parseInt(ramUsage.usedBytes))) ? parseInt(ramUsage.usedBytes) : undefined;
+    const parsedLoad1m   = (loadAverage?.oneMin !== undefined && loadAverage?.oneMin !== null && !isNaN(parseFloat(loadAverage.oneMin))) ? parseFloat(loadAverage.oneMin) : 0;
+    const parsedLoad5m   = (loadAverage?.fiveMin !== undefined && loadAverage?.fiveMin !== null && !isNaN(parseFloat(loadAverage.fiveMin))) ? parseFloat(loadAverage.fiveMin) : 0;
+    const parsedLoad15m  = (loadAverage?.fifteenMin !== undefined && loadAverage?.fifteenMin !== null && !isNaN(parseFloat(loadAverage.fifteenMin))) ? parseFloat(loadAverage.fifteenMin) : 0;
 
     let parsedDisk;
     if (diskUsage) {
       const dp = parseFloat(diskUsage.usagePercent);
       if (!isNaN(dp)) {
-        const dt = diskUsage.totalBytes !== undefined && diskUsage.totalBytes !== null ? parseInt(diskUsage.totalBytes) : undefined;
-        const du = diskUsage.usedBytes !== undefined && diskUsage.usedBytes !== null ? parseInt(diskUsage.usedBytes) : undefined;
+        const dt = diskUsage.totalBytes !== undefined && diskUsage.totalBytes !== null && !isNaN(parseInt(diskUsage.totalBytes)) ? parseInt(diskUsage.totalBytes) : undefined;
+        const du = diskUsage.usedBytes !== undefined && diskUsage.usedBytes !== null && !isNaN(parseInt(diskUsage.usedBytes)) ? parseInt(diskUsage.usedBytes) : undefined;
         parsedDisk = {
-          totalBytes: dt && !isNaN(dt) ? dt : undefined,
-          usedBytes:  du && !isNaN(du) ? du : undefined,
+          totalBytes: dt,
+          usedBytes:  du,
           usagePercent: dp
         };
       }
     }
 
+    const now = new Date();
     const payload = {
       serverId,
       serverName,
+      status:     status || 'up',
       cpuUsage:   parsedCpu,
       ramUsage:   { totalBytes: parsedRamTotal, usedBytes: parsedRamUsed, usagePercent: parsedRamPct },
       diskUsage:  parsedDisk,
       loadAverage: { oneMin: parsedLoad1m, fiveMin: parsedLoad5m, fifteenMin: parsedLoad15m },
       cpuCores:   cpuCores ? parseInt(cpuCores) : undefined,
-      timestamp:  timestamp ? new Date(timestamp) : new Date(),
+      timestamp:  timestamp ? new Date(timestamp) : now,
+      // Nagios ground-truth fields
+      nagiosLastSeen: nagiosLastSeen ? new Date(nagiosLastSeen) : now,
+      nagiosStatus:   nagiosStatus || 'UP',
       services:   services || []
     };
+
+    // Update bridge heartbeat
+    bridgeHeartbeat.lastPollAt = now;
+    bridgeHeartbeat.pollCount++;
+    bridgeHeartbeat.consecutiveErrors = 0;
 
     if (isMongoConnected()) {
       const metric = new ServerMetric(payload);
@@ -179,26 +219,27 @@ router.post('/', async (req, res) => {
       await triggerAlertNotifications(alertPayload);
     };
 
-    const now = Date.now();
+    const nowMs = Date.now();
     if (payload.cpuUsage >= 90) {
       if (!lastAlertedTimes[serverId]) lastAlertedTimes[serverId] = {};
       const last = lastAlertedTimes[serverId]['CPU'];
-      if (!last || now - last > ALERT_THROTTLE_MS) {
-        lastAlertedTimes[serverId]['CPU'] = now;
+      if (!last || nowMs - last > ALERT_THROTTLE_MS) {
+        lastAlertedTimes[serverId]['CPU'] = nowMs;
         await triggerAlert('CPU', payload.cpuUsage);
       }
     }
     if (payload.ramUsage.usagePercent >= 90) {
       if (!lastAlertedTimes[serverId]) lastAlertedTimes[serverId] = {};
       const last = lastAlertedTimes[serverId]['RAM'];
-      if (!last || now - last > ALERT_THROTTLE_MS) {
-        lastAlertedTimes[serverId]['RAM'] = now;
+      if (!last || nowMs - last > ALERT_THROTTLE_MS) {
+        lastAlertedTimes[serverId]['RAM'] = nowMs;
         await triggerAlert('RAM', payload.ramUsage.usagePercent);
       }
     }
 
     res.status(201).json({ message: 'Metric logged successfully.' });
   } catch (error) {
+    bridgeHeartbeat.consecutiveErrors++;
     console.error('Error logging metric:', error);
     res.status(500).json({ error: 'Internal server error.' });
   }
@@ -220,6 +261,155 @@ router.get('/current', async (req, res) => {
     }
   } catch (error) {
     console.error('Error fetching current status:', error);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// ─── NEW: GET /api/metrics/nagios-live — Direct real-time Nagios data ────────
+// This proxies directly to Nagios statusjson.cgi. The frontend uses this as the
+// SOURCE OF TRUTH for host up/down status, independently of the bridge/MongoDB.
+// This permanently fixes the "stale" problem: even if the bridge is lagging,
+// the frontend knows from Nagios itself whether a host is UP.
+router.get('/nagios-live', async (req, res) => {
+  try {
+    const [hostData, serviceData] = await Promise.all([
+      fetchNagiosData('statusjson.cgi?query=hostlist&formatoptions=enumerate'),
+      fetchNagiosData('statusjson.cgi?query=servicelist&details=true&formatoptions=enumerate').catch(() => null),
+    ]);
+
+    const hostlist    = hostData.data?.hostlist || {};
+    const servicelist = serviceData?.data?.servicelist || {};
+
+    const hosts = Object.entries(hostlist).map(([name, state]) => {
+      // Nagios statusjson encodes status as numeric: 2=UP, 4=DOWN, 8=UNREACHABLE
+      const rawStatus = typeof state === 'object' ? state.status : state;
+      let nagiosStatus;
+      if (typeof rawStatus === 'number') {
+        nagiosStatus = rawStatus === 2 ? 'UP' : rawStatus === 4 ? 'DOWN' : rawStatus === 8 ? 'UNREACHABLE' : 'PENDING';
+      } else {
+        const s = String(rawStatus).toUpperCase();
+        nagiosStatus = ['UP', 'DOWN', 'UNREACHABLE', 'PENDING'].includes(s) ? s : 'UP';
+      }
+
+      const hostSvcs = servicelist[name] || {};
+      const services = Object.entries(hostSvcs).map(([svcName, svcData]) => ({
+        name:   svcName,
+        status: svcData?.status || 'unknown',
+        output: svcData?.plugin_output || '',
+      }));
+
+      return {
+        hostName:     name,
+        nagiosStatus,
+        isUp:         nagiosStatus === 'UP',
+        stateRaw:     rawStatus,
+        services,
+        lastCheckTime: typeof state === 'object' ? state.last_check : null,
+      };
+    });
+
+    res.json({
+      ok:         true,
+      fetchedAt:  new Date().toISOString(),
+      hostCount:  hosts.length,
+      hosts,
+    });
+  } catch (err) {
+    console.error('[nagios-live] Error:', err.message);
+    res.status(502).json({
+      ok:    false,
+      error: err.message,
+      hosts: [],
+    });
+  }
+});
+
+// ─── NEW: GET /api/metrics/nagios-health — Bridge heartbeat + Nagios reachability
+router.get('/nagios-health', async (req, res) => {
+  const bridgeStaleSec = bridgeHeartbeat.lastPollAt
+    ? Math.floor((Date.now() - bridgeHeartbeat.lastPollAt) / 1000)
+    : null;
+
+  // Quick Nagios reachability check (hostlist count only, fast)
+  let nagiosReachable = false;
+  let nagiosHostCount = 0;
+  try {
+    const data = await fetchNagiosData('statusjson.cgi?query=hostlist&formatoptions=enumerate');
+    nagiosHostCount = Object.keys(data.data?.hostlist || {}).length;
+    nagiosReachable = true;
+  } catch { /* offline */ }
+
+  res.json({
+    bridge: {
+      lastPollAt:        bridgeHeartbeat.lastPollAt?.toISOString() || null,
+      secondsSinceLastPoll: bridgeStaleSec,
+      isStale:           bridgeStaleSec === null || bridgeStaleSec > 120, // >2 min = stale
+      pollCount:         bridgeHeartbeat.pollCount,
+      consecutiveErrors: bridgeHeartbeat.consecutiveErrors,
+    },
+    nagios: {
+      reachable:  nagiosReachable,
+      hostCount:  nagiosHostCount,
+      url:        NAGIOS_URL,
+    },
+    db: {
+      connected: isMongoConnected(),
+    },
+    checkedAt: new Date().toISOString(),
+  });
+});
+
+// ─── NEW: POST /api/metrics/cleanup-orphans — Remove hosts not in current Nagios poll
+// Called by the bridge at the end of every poll cycle with the full list of
+// host IDs seen in that poll. Any server in MongoDB absent from Nagios for
+// more than 2 poll cycles is marked as "removed" (status tombstoned).
+router.post('/cleanup-orphans', async (req, res) => {
+  try {
+    const { activeHostIds, maxAgeMs } = req.body;
+    if (!Array.isArray(activeHostIds)) {
+      return res.status(400).json({ error: 'activeHostIds must be an array.' });
+    }
+
+    // Default: remove hosts whose nagiosLastSeen is older than maxAgeMs (default 3 min)
+    const ageThreshold = new Date(Date.now() - (maxAgeMs || 3 * 60 * 1000));
+
+    if (!isMongoConnected()) {
+      // In-memory: remove orphans directly
+      const before = inMemoryMetrics.length;
+      inMemoryMetrics = inMemoryMetrics.filter(m => activeHostIds.includes(m.serverId));
+      const removed = before - inMemoryMetrics.length;
+      return res.json({ removed, mode: 'memory' });
+    }
+
+    // Find all serverIds in DB that are NOT in the current active list
+    // AND whose nagiosLastSeen is older than the threshold (or was never set)
+    const allServerIds = await ServerMetric.distinct('serverId');
+    const orphanIds = allServerIds.filter(id => !activeHostIds.includes(id));
+
+    if (orphanIds.length === 0) {
+      return res.json({ removed: 0, orphanIds: [] });
+    }
+
+    // Only remove if they also haven't been seen recently in Nagios
+    // (i.e., not just a transient network glitch on one poll)
+    const orphanCondition = {
+      serverId: { $in: orphanIds },
+      $or: [
+        { nagiosLastSeen: { $lt: ageThreshold } },
+        { nagiosLastSeen: { $exists: false } },
+      ],
+    };
+
+    const orphanDocs = await ServerMetric.distinct('serverId', orphanCondition);
+
+    if (orphanDocs.length > 0) {
+      console.log(`[Cleanup] Removing ${orphanDocs.length} orphan server(s) not in Nagios: ${orphanDocs.join(', ')}`);
+      await ServerMetric.deleteMany({ serverId: { $in: orphanDocs } });
+    }
+
+    res.json({ removed: orphanDocs.length, orphanIds: orphanDocs });
+  } catch (error) {
+    console.error('Error cleaning orphans:', error);
     res.status(500).json({ error: 'Internal server error.' });
   }
 });
@@ -261,7 +451,6 @@ router.get('/ram-history-24h', async (req, res) => {
       ]);
       return res.json(history);
     } else {
-      // In-memory: no historical data in fallback mode — return empty
       return res.json([]);
     }
   } catch (error) {
@@ -495,7 +684,6 @@ router.get('/combustion-summary', async (req, res) => {
 
       return res.json(computeSummaryPayload(serverSummaries));
     } else {
-      // In-memory fallback: use only live entries
       const serverSummaries = inMemoryMetrics.map(m => ({
         serverId:   m.serverId,
         serverName: m.serverName,

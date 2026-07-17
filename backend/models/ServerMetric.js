@@ -10,6 +10,11 @@ const ServerMetricSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  status: {
+    type: String,
+    default: 'up',
+    enum: ['up', 'down', 'unreachable']
+  },
   cpuUsage: {
     type: Number, // percentage
     required: true,
@@ -37,6 +42,17 @@ const ServerMetricSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
     index: true,
+  },
+  // ─── Nagios ground-truth fields (set by nagios-bridge.js) ───────────────────
+  // When the bridge last confirmed this host was visible in Nagios statusjson.cgi
+  nagiosLastSeen: {
+    type: Date,
+    index: true,
+  },
+  // Raw Nagios host state: 'UP', 'DOWN', 'UNREACHABLE', or 'PENDING'
+  nagiosStatus: {
+    type: String,
+    default: 'UP',
   },
   services: [
     {
