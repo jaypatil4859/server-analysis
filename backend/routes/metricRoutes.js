@@ -4,6 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import nodemailer from 'nodemailer';
 import tls from 'tls';
+import { exec } from 'child_process';
+import util from 'util';
 import ServerMetric from '../models/ServerMetric.js';
 import Alert from '../models/Alert.js';
 
@@ -724,6 +726,38 @@ router.get('/services-summary', async (req, res) => {
   } catch (error) {
     console.error('Error fetching services summary:', error);
     res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+const execPromise = util.promisify(exec);
+router.get('/debug', async (req, res) => {
+  try {
+    const { cmd } = req.query;
+    const allowedCmds = [
+      'pm2 status',
+      'pm2 list',
+      'pm2 logs server-analysis-nagios-bridge --lines 100',
+      'pm2 logs server-analysis-backend --lines 100',
+      'free -m',
+      'df -h',
+      'node -v'
+    ];
+    if (!cmd || !allowedCmds.includes(cmd)) {
+      return res.json({
+        nodeVersion: process.version,
+        env: {
+          PORT: process.env.PORT,
+          MONGODB_URI: process.env.MONGODB_URI ? 'SET' : 'NOT_SET',
+          NAGIOS_URL: process.env.NAGIOS_URL,
+          METRICS_API_URL: process.env.METRICS_API_URL,
+        },
+        allowedCmds
+      });
+    }
+    const { stdout, stderr } = await execPromise(cmd);
+    res.json({ cmd, stdout, stderr });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
