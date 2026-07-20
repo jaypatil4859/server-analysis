@@ -432,6 +432,8 @@ body {
 .status-label.online::before { background: var(--success); }
 .status-label.stale  { color: var(--danger); }
 .status-label.stale::before  { background: var(--danger); }
+.status-label.down   { color: var(--danger); }
+.status-label.down::before   { background: var(--danger); }
 
 .status-time {
   font-size: 10px;

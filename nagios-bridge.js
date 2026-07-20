@@ -166,8 +166,11 @@ function parseCpuPercent(output) {
   let m = output.match(/cpu\s*(?:usage)?:?\s*([\d.]+)\s*%/i);
   if (m) return Math.min(100, parseFloat(m[1]));
 
+  m = output.match(/CPU load:\s*([\d.]+)/i);
+  if (m) return Math.min(100, parseFloat(m[1]));
+
   const loadM = output.match(/load average:\s*([\d.]+)/i);
-  const coreM = output.match(/(\d+)\s*cpu/i) || output.match(/(\d+)\s*core/i) || output.match(/(\d+)\s*processor/i);
+  const coreM = output.match(/(\d+)\s*cpu/i) || output.match(/(\d+)\s*core/i) || output.match(/(\d+)\s*processor/i) || output.match(/(?:cpu|core|processor|logical)s?:\s*(\d+)/i);
   if (loadM) {
     const load  = parseFloat(loadM[1]);
     const cores = coreM ? parseInt(coreM[1]) : null;
@@ -190,7 +193,9 @@ function parseLoadAverage(output) {
 }
 
 function parseCpuCores(output) {
-  const m = output.match(/(\d+)\s*(?:cpu|core|processor|logical)/i);
+  let m = output.match(/(\d+)\s*(?:cpu|core|processor|logical)/i);
+  if (m) return parseInt(m[1]);
+  m = output.match(/(?:cpu|core|processor|logical)s?:\s*(\d+)/i);
   return m ? parseInt(m[1]) : null;
 }
 
