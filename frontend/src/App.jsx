@@ -298,7 +298,7 @@ export default function App() {
   useEffect(() => { fetchLaptopHistory(); }, [fetchLaptopHistory]);
 
   useEffect(() => {
-    if (viewMode === 'ssl' && sslData.length === 0) fetchSslData();
+    if ((viewMode === 'ssl' || viewMode === 'services') && sslData.length === 0) fetchSslData();
   }, [viewMode, sslData.length, fetchSslData]);
 
   // ─── Nagios Live polling (every 15s — independent of bridge) ─────────────────
