@@ -134,7 +134,7 @@ router.post('/', async (req, res) => {
     const {
       serverId, serverName, status, cpuUsage, ramUsage,
       loadAverage, cpuCores, diskUsage, timestamp, services,
-      nagiosLastSeen, nagiosStatus,
+      nagiosLastSeen, nagiosStatus, uptimeSeconds,
     } = req.body;
 
     if (!serverId || !serverName) {
@@ -144,21 +144,20 @@ router.post('/', async (req, res) => {
     const parsedCpu    = (cpuUsage !== undefined && cpuUsage !== null && !isNaN(parseFloat(cpuUsage))) ? parseFloat(cpuUsage) : 0;
     const ramPctInput  = ramUsage?.usagePercent;
     const parsedRamPct = (ramPctInput !== undefined && ramPctInput !== null && !isNaN(parseFloat(ramPctInput))) ? parseFloat(ramPctInput) : 0;
-    const parsedRamTotal = (ramUsage?.totalBytes !== undefined && ramUsage?.totalBytes !== null && !isNaN(parseInt(ramUsage.totalBytes))) ? parseInt(ramUsage.totalBytes) : undefined;
-    const parsedRamUsed  = (ramUsage?.usedBytes !== undefined && ramUsage?.usedBytes !== null && !isNaN(parseInt(ramUsage.usedBytes))) ? parseInt(ramUsage.usedBytes) : undefined;
-    const parsedLoad1m   = (loadAverage?.oneMin !== undefined && loadAverage?.oneMin !== null && !isNaN(parseFloat(loadAverage.oneMin))) ? parseFloat(loadAverage.oneMin) : 0;
-    const parsedLoad5m   = (loadAverage?.fiveMin !== undefined && loadAverage?.fiveMin !== null && !isNaN(parseFloat(loadAverage.fiveMin))) ? parseFloat(loadAverage.fiveMin) : 0;
-    const parsedLoad15m  = (loadAverage?.fifteenMin !== undefined && loadAverage?.fifteenMin !== null && !isNaN(parseFloat(loadAverage.fifteenMin))) ? parseFloat(loadAverage.fifteenMin) : 0;
+    // Use null for missing bytes — null stores in MongoDB; undefined would trigger schema defaults
+    const parsedRamTotal = (ramUsage?.totalBytes != null && !isNaN(parseInt(ramUsage.totalBytes))) ? parseInt(ramUsage.totalBytes) : null;
+    const parsedRamUsed  = (ramUsage?.usedBytes  != null && !isNaN(parseInt(ramUsage.usedBytes)))  ? parseInt(ramUsage.usedBytes)  : null;
+    const parsedLoad1m   = (loadAverage?.oneMin     != null && !isNaN(parseFloat(loadAverage.oneMin)))     ? parseFloat(loadAverage.oneMin)     : 0;
+    const parsedLoad5m   = (loadAverage?.fiveMin    != null && !isNaN(parseFloat(loadAverage.fiveMin)))    ? parseFloat(loadAverage.fiveMin)    : 0;
+    const parsedLoad15m  = (loadAverage?.fifteenMin != null && !isNaN(parseFloat(loadAverage.fifteenMin))) ? parseFloat(loadAverage.fifteenMin) : 0;
 
     let parsedDisk;
     if (diskUsage) {
       const dp = parseFloat(diskUsage.usagePercent);
-      if (!isNaN(dp)) {
-        const dt = diskUsage.totalBytes !== undefined && diskUsage.totalBytes !== null && !isNaN(parseInt(diskUsage.totalBytes)) ? parseInt(diskUsage.totalBytes) : undefined;
-        const du = diskUsage.usedBytes !== undefined && diskUsage.usedBytes !== null && !isNaN(parseInt(diskUsage.usedBytes)) ? parseInt(diskUsage.usedBytes) : undefined;
+      if (!isNaN(dp) && dp >= 0 && dp <= 100) {
         parsedDisk = {
-          totalBytes: dt,
-          usedBytes:  du,
+          totalBytes:   diskUsage.totalBytes != null && !isNaN(parseInt(diskUsage.totalBytes)) ? parseInt(diskUsage.totalBytes) : null,
+          usedBytes:    diskUsage.usedBytes  != null && !isNaN(parseInt(diskUsage.usedBytes))  ? parseInt(diskUsage.usedBytes)  : null,
           usagePercent: dp
         };
       }
@@ -173,12 +172,14 @@ router.post('/', async (req, res) => {
       ramUsage:   { totalBytes: parsedRamTotal, usedBytes: parsedRamUsed, usagePercent: parsedRamPct },
       diskUsage:  parsedDisk,
       loadAverage: { oneMin: parsedLoad1m, fiveMin: parsedLoad5m, fifteenMin: parsedLoad15m },
-      cpuCores:   cpuCores ? parseInt(cpuCores) : undefined,
+      // cpuCores: null when unknown (0 is treated as unknown — can't have 0 cores)
+      cpuCores:   (cpuCores != null && !isNaN(parseInt(cpuCores)) && parseInt(cpuCores) > 0) ? parseInt(cpuCores) : null,
+      uptimeSeconds: (uptimeSeconds != null && !isNaN(parseInt(uptimeSeconds)) && parseInt(uptimeSeconds) >= 0) ? parseInt(uptimeSeconds) : null,
       timestamp:  timestamp ? new Date(timestamp) : now,
       // Nagios ground-truth fields
       nagiosLastSeen: nagiosLastSeen ? new Date(nagiosLastSeen) : now,
       nagiosStatus:   nagiosStatus || 'UP',
-      services:   services || []
+      services:   Array.isArray(services) ? services : []
     };
 
     // Update bridge heartbeat
@@ -234,6 +235,15 @@ router.post('/', async (req, res) => {
       if (!last || nowMs - last > ALERT_THROTTLE_MS) {
         lastAlertedTimes[serverId]['RAM'] = nowMs;
         await triggerAlert('RAM', payload.ramUsage.usagePercent);
+      }
+    }
+    // Disk alert: trigger when disk usage >= 90%
+    if (payload.diskUsage?.usagePercent >= 90) {
+      if (!lastAlertedTimes[serverId]) lastAlertedTimes[serverId] = {};
+      const last = lastAlertedTimes[serverId]['DISK'];
+      if (!last || nowMs - last > ALERT_THROTTLE_MS) {
+        lastAlertedTimes[serverId]['DISK'] = nowMs;
+        await triggerAlert('DISK', payload.diskUsage.usagePercent);
       }
     }
 

@@ -166,22 +166,33 @@ function parseCpuPercent(output) {
   let m = output.match(/cpu\s*(?:usage)?:?\s*([\d.]+)\s*%/i);
   if (m) return Math.min(100, parseFloat(m[1]));
 
-  m = output.match(/CPU load:\s*([\d.]+)/i);
-  if (m) return Math.min(100, parseFloat(m[1]));
+  // Fast-path: "CPU load: X.XX, Total CPU cores: N" (Nagios custom check format)
+  const nagiosLoadM = output.match(/CPU load:\s*([\d.]+)[^\n]*Total CPU cores:\s*(\d+)/i);
+  if (nagiosLoadM) {
+    const load  = parseFloat(nagiosLoadM[1]);
+    const cores = parseInt(nagiosLoadM[2]);
+    if (cores > 0) return Math.min(100, parseFloat(((load / cores) * 100).toFixed(1)));
+  }
+
+  m = output.match(/CPU load(?:\s+is)?\s+at\s+([\d.]+)/i);
+  if (m) {
+    // Try to find cores in same string
+    const coresM = parseCpuCores(output);
+    if (coresM && coresM > 0) {
+      return Math.min(100, parseFloat(((parseFloat(m[1]) / coresM) * 100).toFixed(1)));
+    }
+    return Math.min(100, parseFloat(m[1]));
+  }
 
   const loadM = output.match(/load average:\s*([\d.]+)/i);
-  const coreM = output.match(/(\d+)\s*cpu/i) || output.match(/(\d+)\s*core/i) || output.match(/(\d+)\s*processor/i) || output.match(/(?:cpu|core|processor|logical)s?:\s*(\d+)/i);
   if (loadM) {
     const load  = parseFloat(loadM[1]);
-    const cores = coreM ? parseInt(coreM[1]) : null;
+    const cores = parseCpuCores(output);
     if (cores && cores > 0) {
       return Math.min(100, parseFloat(((load / cores) * 100).toFixed(1)));
     }
     return Math.min(100, parseFloat((load * 20).toFixed(1)));
   }
-
-  m = output.match(/CPU load(?:\s+is)?\s+at\s+([\d.]+)/i);
-  if (m) return Math.min(100, parseFloat(m[1]));
 
   return null;
 }
@@ -193,8 +204,15 @@ function parseLoadAverage(output) {
 }
 
 function parseCpuCores(output) {
-  let m = output.match(/(\d+)\s*(?:cpu|core|processor|logical)/i);
+  // Highest priority: "Total CPU cores: N" (Nagios custom plugin format)
+  let m = output.match(/Total CPU cores:\s*(\d+)/i);
   if (m) return parseInt(m[1]);
+
+  // "N cpu", "N core", "N processor", "N logical" (number before keyword)
+  m = output.match(/(\d+)\s*(?:cpu|core|processor|logical)/i);
+  if (m) return parseInt(m[1]);
+
+  // "cpus: N", "cores: N", "processors: N", "logical: N" (number after keyword)
   m = output.match(/(?:cpu|core|processor|logical)s?:\s*(\d+)/i);
   return m ? parseInt(m[1]) : null;
 }
@@ -269,6 +287,8 @@ function parseDiskUsage(output) {
   const pctM = output.match(/([\d.]+)\s*%/);
   if (!pctM) return null;
   const pct = parseFloat(pctM[1]);
+  // Sanity: disk % should be 0-100
+  if (pct < 0 || pct > 100) return null;
 
   const totalM = output.match(/(?:total|size)[:=]?\s*([\d.]+)\s*(GB|GiB|MB|MiB|TB|TiB)/i) ||
                  output.match(/([\d.]+)\s*(GB|GiB|MB|MiB|TB|TiB)\s+total/i);
@@ -281,12 +301,42 @@ function parseDiskUsage(output) {
     else if (u.startsWith('m')) totalBytes = Math.round(n * 1024 * 1024);
   }
 
-  if (!totalBytes) return { usagePercent: pct };
+  // Always return at minimum the %, even when byte sizes are unknown
+  if (!totalBytes) return { usagePercent: pct, totalBytes: null, usedBytes: null };
   return {
     totalBytes,
     usedBytes:    Math.round((pct / 100) * totalBytes),
     usagePercent: pct
   };
+}
+
+/**
+ * Parse uptime from Nagios Uptime service output.
+ * Handles: "15:20:31 up 166 days, 15:44" or "up 2:30" or "up 1 day, 2:30"
+ * Returns total seconds, or null if unparseable.
+ */
+function parseUptimeSeconds(output) {
+  // Match "up N days, H:MM" or "up N day, H:MM"
+  let m = output.match(/up\s+(\d+)\s+days?,\s*(\d+):(\d+)/i);
+  if (m) {
+    return parseInt(m[1]) * 86400 + parseInt(m[2]) * 3600 + parseInt(m[3]) * 60;
+  }
+  // Match "up N days, NNmin"
+  m = output.match(/up\s+(\d+)\s+days?,\s*(\d+)\s*min/i);
+  if (m) {
+    return parseInt(m[1]) * 86400 + parseInt(m[2]) * 60;
+  }
+  // Match "up H:MM" (no days)
+  m = output.match(/up\s+(\d+):(\d+)/i);
+  if (m) {
+    return parseInt(m[1]) * 3600 + parseInt(m[2]) * 60;
+  }
+  // Match "up N min"
+  m = output.match(/up\s+(\d+)\s*min/i);
+  if (m) {
+    return parseInt(m[1]) * 60;
+  }
+  return null;
 }
 
 // ─── Concurrency limiter ──────────────────────────────────────────────────────
@@ -448,15 +498,25 @@ async function parseAndSendMetrics() {
     }
 
     const uptimeSvc = findServiceByKeywords(hostServices, ['uptime']);
-    if (parsedLoad === null && uptimeSvc?.plugin_output) {
+    // Always parse uptime string regardless of whether load was already found
+    let parsedUptimeSeconds = null;
+    if (uptimeSvc?.plugin_output) {
+      parsedUptimeSeconds = parseUptimeSeconds(uptimeSvc.plugin_output);
+      // Also try load average and cores from uptime output if not found yet
       parsedCores = parsedCores || parseCpuCores(uptimeSvc.plugin_output);
-      const load  = parseLoadAverage(uptimeSvc.plugin_output);
-      if (load) {
-        parsedLoad = load;
-        if (parsedCpuPct === null && parsedCores) {
-          parsedCpuPct = Math.min(100, parseFloat(((load.oneMin / parsedCores) * 100).toFixed(1)));
+      if (parsedLoad === null) {
+        const load  = parseLoadAverage(uptimeSvc.plugin_output);
+        if (load) {
+          parsedLoad = load;
+          if (parsedCpuPct === null && parsedCores) {
+            parsedCpuPct = Math.min(100, parseFloat(((load.oneMin / parsedCores) * 100).toFixed(1)));
+          }
         }
       }
+    }
+    // Also try Load Average service output for uptime string
+    if (parsedUptimeSeconds === null && loadSvc?.plugin_output) {
+      parsedUptimeSeconds = parseUptimeSeconds(loadSvc.plugin_output);
     }
 
     // ── Memory ─────────────────────────────────────────────────────────────
@@ -508,11 +568,13 @@ async function parseAndSendMetrics() {
     // ── Build payload (self-healing fallbacks) ─────────────────────────────
     const cpuUsageVal = isNumeric(parsedCpuPct) ? parseFloat(parsedCpuPct.toFixed(1)) : 0;
 
-    let ramUsageVal = { totalBytes: 0, usedBytes: 0, usagePercent: 0 };
+    // Use null (not undefined) for missing byte values — null survives JSON.stringify
+    // and stores explicitly in MongoDB, while undefined gets stripped and triggers schema defaults
+    let ramUsageVal = { totalBytes: null, usedBytes: null, usagePercent: 0 };
     if (parsedRam) {
       ramUsageVal = {
-        totalBytes:   isNumeric(parsedRam.totalBytes)   ? parsedRam.totalBytes : undefined,
-        usedBytes:    isNumeric(parsedRam.usedBytes)    ? parsedRam.usedBytes  : undefined,
+        totalBytes:   isNumeric(parsedRam.totalBytes)   ? parsedRam.totalBytes : null,
+        usedBytes:    isNumeric(parsedRam.usedBytes)    ? parsedRam.usedBytes  : null,
         usagePercent: isNumeric(parsedRam.usagePercent) ? parseFloat(parsedRam.usagePercent.toFixed(1)) : 0
       };
     }
@@ -526,6 +588,12 @@ async function parseAndSendMetrics() {
       };
     }
 
+    // cpuCores: send null explicitly when unknown so Mongoose stores null (not default 1)
+    const cpuCoresVal = (isNumeric(parsedCores) && parsedCores > 0) ? parsedCores : null;
+    if (cpuCoresVal === null) {
+      console.warn(`[WARN] ${hostName}: No core count found in plugin output — storing null`);
+    }
+
     const payload = {
       serverId:       sanitizedId,
       serverName:     hostName,
@@ -533,7 +601,8 @@ async function parseAndSendMetrics() {
       cpuUsage:       cpuUsageVal,
       ramUsage:       ramUsageVal,
       loadAverage:    loadAverageVal,
-      cpuCores:       isNumeric(parsedCores) ? parsedCores : undefined,
+      cpuCores:       cpuCoresVal,
+      uptimeSeconds:  isNumeric(parsedUptimeSeconds) ? parsedUptimeSeconds : null,
       timestamp:      nagiosNowISO,
       // ── Nagios ground-truth (critical for stale-override in frontend) ──
       nagiosLastSeen: nagiosNowISO,
@@ -541,11 +610,14 @@ async function parseAndSendMetrics() {
       services:       servicesList
     };
 
-    if (parsedDisk) {
+    // Always include diskUsage if we have at least the percentage
+    // Bug fix: old code only set diskUsage if totalBytes existed — this hid disk bars for
+    // servers where Nagios only reports % (e.g. "73%", "91%")
+    if (parsedDisk && isNumeric(parsedDisk.usagePercent)) {
       payload.diskUsage = {
-        totalBytes:   isNumeric(parsedDisk.totalBytes)   ? parsedDisk.totalBytes : undefined,
-        usedBytes:    isNumeric(parsedDisk.usedBytes)    ? parsedDisk.usedBytes  : undefined,
-        usagePercent: isNumeric(parsedDisk.usagePercent) ? parseFloat(parsedDisk.usagePercent.toFixed(1)) : 0
+        totalBytes:   isNumeric(parsedDisk.totalBytes) ? parsedDisk.totalBytes : null,
+        usedBytes:    isNumeric(parsedDisk.usedBytes)  ? parsedDisk.usedBytes  : null,
+        usagePercent: parseFloat(parsedDisk.usagePercent.toFixed(1))
       };
     }
 
@@ -559,9 +631,11 @@ async function parseAndSendMetrics() {
       });
 
       if (res.ok) {
-        const ramStr  = `${ramUsageVal.usagePercent}%` + (ramUsageVal.totalBytes ? ` (${(ramUsageVal.totalBytes / 1073741824).toFixed(1)}GB)` : '');
-        const diskStr = payload.diskUsage ? ` Disk: ${payload.diskUsage.usagePercent}%` : '';
-        console.log(`[OK] ${hostName} [${nagiosStatus}] — CPU: ${payload.cpuUsage}% Load: ${payload.loadAverage.oneMin} RAM: ${ramStr}${diskStr}`);
+        const ramStr    = `${ramUsageVal.usagePercent}%` + (ramUsageVal.totalBytes ? ` (${(ramUsageVal.totalBytes / 1073741824).toFixed(1)}GB)` : '');
+        const diskStr   = payload.diskUsage ? ` Disk: ${payload.diskUsage.usagePercent}%` : '';
+        const coresStr  = cpuCoresVal !== null ? ` [${cpuCoresVal}c]` : ' [?c]';
+        const uptimeStr = payload.uptimeSeconds !== null ? ` Up: ${Math.floor(payload.uptimeSeconds / 86400)}d` : '';
+        console.log(`[OK] ${hostName} [${nagiosStatus}]${coresStr}${uptimeStr} — CPU: ${payload.cpuUsage}% Load: ${payload.loadAverage.oneMin} RAM: ${ramStr}${diskStr}`);
       } else {
         const err = await res.text();
         console.error(`[WARN] ${hostName} HTTP ${res.status}: ${err}`);

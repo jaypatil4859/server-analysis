@@ -16,27 +16,33 @@ const ServerMetricSchema = new mongoose.Schema({
     enum: ['up', 'down', 'unreachable']
   },
   cpuUsage: {
-    type: Number, // percentage
+    type: Number, // percentage 0-100
     required: true,
   },
   ramUsage: {
-    totalBytes: { type: Number },
-    usedBytes: { type: Number },
+    totalBytes:   { type: Number, default: null },
+    usedBytes:    { type: Number, default: null },
     usagePercent: { type: Number, required: true },
   },
   diskUsage: {
-    totalBytes: { type: Number },
-    usedBytes: { type: Number },
-    usagePercent: { type: Number }
+    totalBytes:   { type: Number, default: null },
+    usedBytes:    { type: Number, default: null },
+    usagePercent: { type: Number, default: null }
   },
   loadAverage: {
-    oneMin: { type: Number, required: true },
-    fiveMin: { type: Number, required: true },
+    oneMin:     { type: Number, required: true },
+    fiveMin:    { type: Number, required: true },
     fifteenMin: { type: Number, required: true },
   },
+  // null = unknown (plugin didn't report), number = actual core count
   cpuCores: {
     type: Number,
-    default: 1
+    default: null
+  },
+  // Uptime in seconds — parsed from Nagios Uptime service output
+  uptimeSeconds: {
+    type: Number,
+    default: null
   },
   timestamp: {
     type: Date,
@@ -56,7 +62,7 @@ const ServerMetricSchema = new mongoose.Schema({
   },
   services: [
     {
-      name: { type: String, required: true },
+      name:   { type: String, required: true },
       status: { type: String, required: true },
       output: { type: String }
     }
@@ -65,5 +71,9 @@ const ServerMetricSchema = new mongoose.Schema({
 
 // Compound index to speed up time-range queries per server
 ServerMetricSchema.index({ serverId: 1, timestamp: -1 });
+
+// ─── TTL index: auto-delete documents older than 30 days ─────────────────────
+// Prevents unbounded DB growth (15 servers × 3 polls/min = 64,800 docs/day)
+ServerMetricSchema.index({ timestamp: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 });
 
 export default mongoose.model('ServerMetric', ServerMetricSchema);

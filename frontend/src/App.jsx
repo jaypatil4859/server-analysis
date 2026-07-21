@@ -347,13 +347,14 @@ export default function App() {
   const getWeeklySummary = () => {
     if (!weeklyHistory.length) return { avgCpu:'—', avgRam:'—', avgLoad:'—', maxCpu:'—', maxRam:'—', maxLoad:'—' };
     const avg = arr => arr.reduce((a,b)=>a+b,0)/arr.length;
+    const safeMax = arr => arr.length ? Math.max(...arr) : 0;  // guard against -Infinity on empty
     return {
       avgCpu:  avg(weeklyHistory.map(h=>h.avgCpu||0)).toFixed(1)+'%',
       avgRam:  avg(weeklyHistory.map(h=>h.avgRam||0)).toFixed(1)+'%',
       avgLoad: avg(weeklyHistory.map(h=>h.avgLoad||0)).toFixed(2),
-      maxCpu:  Math.max(...weeklyHistory.map(h=>h.maxCpu||0)).toFixed(1)+'%',
-      maxRam:  Math.max(...weeklyHistory.map(h=>h.maxRam||0)).toFixed(1)+'%',
-      maxLoad: Math.max(...weeklyHistory.map(h=>h.maxLoad||0)).toFixed(2)
+      maxCpu:  safeMax(weeklyHistory.map(h=>h.maxCpu||0)).toFixed(1)+'%',
+      maxRam:  safeMax(weeklyHistory.map(h=>h.maxRam||0)).toFixed(1)+'%',
+      maxLoad: safeMax(weeklyHistory.map(h=>h.maxLoad||0)).toFixed(2)
     };
   };
 
@@ -370,9 +371,19 @@ export default function App() {
 
   // ─── Helpers ──────────────────────────────────────────────────────────────────
   const fmtBytes = (bytes) => {
-    if (!bytes) return '—';
+    if (!bytes || bytes <= 0) return '—';
     const gb = bytes / (1024**3);
     return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes/(1024**2)).toFixed(0)} MB`;
+  };
+
+  // Format uptime seconds into human-readable string
+  const fmtUptime = (seconds) => {
+    if (!seconds || seconds < 0) return null;
+    const days = Math.floor(seconds / 86400);
+    const hrs  = Math.floor((seconds % 86400) / 3600);
+    if (days > 0) return `${days}d ${hrs}h`;
+    const mins = Math.floor((seconds % 3600) / 60);
+    return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
   };
 
   const serviceClass = (status) => {
@@ -381,6 +392,16 @@ export default function App() {
     if (s === 'warning') return 'warning';
     if (s === 'critical') return 'critical';
     return 'unknown';
+  };
+
+  // Load saturation color: compares load to core count
+  // Green=ok, Yellow=warn (>80% saturation), Red=critical (>100% saturation)
+  const loadSaturationColor = (load1m, cpuCores) => {
+    if (!cpuCores || cpuCores <= 0) return 'var(--text-2)'; // unknown cores
+    const ratio = load1m / cpuCores;
+    if (ratio >= 1.0) return 'var(--danger)';
+    if (ratio >= 0.8) return 'var(--warning)';
+    return 'var(--success)';
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────────
@@ -575,15 +596,19 @@ export default function App() {
                   const nagiosConfirmsDown = nagiosStatus === 'DOWN' || nagiosStatus === 'UNREACHABLE';
                   // Only mark stale if: Nagios doesn't say UP AND MongoDB data > 5 min old
                   const dbAge = Date.now() - new Date(server.timestamp);
-                  const isStale = !nagiosConfirmsUp && dbAge > 5 * 60 * 1000; // 5 min (was 3 min)
+                  const isStale = !nagiosConfirmsUp && dbAge > 5 * 60 * 1000;
                   const isDown  = nagiosConfirmsDown || server.status === 'down';
-                  const isOverloaded = server.cpuUsage >= 90 || server.ramUsage.usagePercent >= 90;
+                  // Overloaded: CPU or RAM or Disk >= 90%
+                  const diskPct = server.diskUsage?.usagePercent ?? 0;
+                  const isOverloaded = (server.cpuUsage ?? 0) >= 90 || (server.ramUsage?.usagePercent ?? 0) >= 90 || diskPct >= 90;
                   const secAgo  = Math.max(0, Math.floor(dbAge / 1000));
                   const timeAgo = secAgo < 60 ? `${secAgo}s ago` : `${Math.floor(secAgo/60)}m ago`;
 
-                  const cpuColor  = server.cpuUsage >= 90 ? 'danger' : 'cpu';
-                  const ramColor  = server.ramUsage.usagePercent >= 90 ? 'danger' : 'ram';
-                  const diskColor = server.diskUsage?.usagePercent >= 90 ? 'danger' : 'disk';
+                  const cpuColor  = (server.cpuUsage ?? 0) >= 90 ? 'danger' : 'cpu';
+                  const ramColor  = (server.ramUsage?.usagePercent ?? 0) >= 90 ? 'danger' : 'ram';
+                  const diskColor = diskPct >= 90 ? 'danger' : 'disk';
+                  // Load saturation: color based on load/cores ratio
+                  const loadSatColor = loadSaturationColor(server.loadAverage?.oneMin ?? 0, server.cpuCores);
 
                   return (
                     <div key={server.serverId} className={`server-card ${isOverloaded ? 'overloaded' : ''}`}>
@@ -623,12 +648,16 @@ export default function App() {
                         <div className="metric-row">
                           <div className="metric-label-row">
                             <span className="metric-label">
-                              <Cpu size={12} /> CPU{server.cpuCores ? ` (${server.cpuCores} cores)` : ''}
+                              <Cpu size={12} /> CPU
+                              {server.cpuCores
+                                ? <span style={{ color:'var(--text-3)', fontWeight:400 }}> ({server.cpuCores} cores)</span>
+                                : <span style={{ color:'var(--text-3)', fontWeight:400 }}> (? cores)</span>
+                              }
                             </span>
-                            <span className={`metric-val ${cpuColor}`}>{server.cpuUsage}%</span>
+                            <span className={`metric-val ${cpuColor}`}>{server.cpuUsage ?? 0}%</span>
                           </div>
                           <div className="progress-track">
-                            <div className={`progress-bar ${cpuColor}`} style={{ width:`${Math.min(100,server.cpuUsage)}%` }} />
+                            <div className={`progress-bar ${cpuColor}`} style={{ width:`${Math.min(100, server.cpuUsage ?? 0)}%` }} />
                           </div>
                         </div>
 
@@ -638,18 +667,18 @@ export default function App() {
                             <span className="metric-label">
                               <HardDrive size={12} /> Memory
                             </span>
-                            <span className={`metric-val ${ramColor}`}>{server.ramUsage.usagePercent}%</span>
+                            <span className={`metric-val ${ramColor}`}>{server.ramUsage?.usagePercent ?? 0}%</span>
                           </div>
                           <div className="progress-track">
-                            <div className={`progress-bar ${ramColor}`} style={{ width:`${Math.min(100,server.ramUsage.usagePercent)}%` }} />
+                            <div className={`progress-bar ${ramColor}`} style={{ width:`${Math.min(100, server.ramUsage?.usagePercent ?? 0)}%` }} />
                           </div>
                           <div className="metric-sub">
-                            {fmtBytes(server.ramUsage.usedBytes)} / {fmtBytes(server.ramUsage.totalBytes)}
+                            {fmtBytes(server.ramUsage?.usedBytes)} / {fmtBytes(server.ramUsage?.totalBytes)}
                           </div>
                         </div>
 
-                        {/* Disk */}
-                        {server.diskUsage?.totalBytes > 0 && (
+                        {/* Disk — show whenever usagePercent is available, even without byte data */}
+                        {(server.diskUsage?.usagePercent != null) && (
                           <div className="metric-row">
                             <div className="metric-label-row">
                               <span className="metric-label">
@@ -658,23 +687,28 @@ export default function App() {
                               <span className={`metric-val ${diskColor}`}>{server.diskUsage.usagePercent}%</span>
                             </div>
                             <div className="progress-track">
-                              <div className={`progress-bar ${diskColor}`} style={{ width:`${Math.min(100,server.diskUsage.usagePercent)}%` }} />
+                              <div className={`progress-bar ${diskColor}`} style={{ width:`${Math.min(100, server.diskUsage.usagePercent)}%` }} />
                             </div>
-                            <div className="metric-sub">
-                              {fmtBytes(server.diskUsage.usedBytes)} / {fmtBytes(server.diskUsage.totalBytes)}
-                            </div>
+                            {(server.diskUsage.totalBytes > 0) && (
+                              <div className="metric-sub">
+                                {fmtBytes(server.diskUsage.usedBytes)} / {fmtBytes(server.diskUsage.totalBytes)}
+                              </div>
+                            )}
                           </div>
                         )}
 
-                        {/* Load average */}
+                        {/* Load average — with saturation color based on core count */}
                         <div className="metric-row">
                           <span className="metric-label" style={{ marginBottom:4 }}>
                             <Layers size={12} /> Load Average
+                            {server.cpuCores && (
+                              <span style={{ color:'var(--text-3)', fontWeight:400, marginLeft:4 }}>({server.cpuCores} cores)</span>
+                            )}
                           </span>
                           <div className="load-row">
-                            {[['1m', server.loadAverage.oneMin], ['5m', server.loadAverage.fiveMin], ['15m', server.loadAverage.fifteenMin]].map(([lbl, val]) => (
+                            {[['1m', server.loadAverage?.oneMin ?? 0], ['5m', server.loadAverage?.fiveMin ?? 0], ['15m', server.loadAverage?.fifteenMin ?? 0]].map(([lbl, val]) => (
                               <div key={lbl} className="load-item">
-                                <span className="load-item-val">{val}</span>
+                                <span className="load-item-val" style={{ color: lbl === '1m' ? loadSatColor : undefined }}>{val}</span>
                                 <span className="load-item-label">{lbl}</span>
                               </div>
                             ))}
@@ -697,6 +731,14 @@ export default function App() {
                                 </div>
                               ))}
                             </div>
+                          </div>
+                        )}
+
+                        {/* Uptime footer */}
+                        {server.uptimeSeconds > 0 && (
+                          <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:6, paddingTop:6, borderTop:'1px solid var(--border-light)', fontSize:11, color:'var(--text-3)' }}>
+                            <Clock size={10} />
+                            <span>Up {fmtUptime(server.uptimeSeconds)}</span>
                           </div>
                         )}
                       </div>
