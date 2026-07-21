@@ -200,15 +200,21 @@ function parseCpuCores(output) {
 }
 
 function parseMemoryDetailed(pluginOutput, longPluginOutput) {
-  const fullText = `${pluginOutput}\n${longPluginOutput || ''}`.trim();
+  // Combine all available text — some plugins put the header in plugin_output
+  // and the actual Mem: data row in long_plugin_output.
+  // Normalize: join with real newline (long_plugin_output may already contain \n)
+  const combined = [pluginOutput || '', longPluginOutput || ''].join('\n');
+  const lines = combined.split(/\n|\\n/);  // handle literal \n in some API formats
 
-  const memLine = fullText.split('\n').find(l => l.trim().startsWith('Mem:'));
+  // Strategy 1: find "Mem:   total  used  ..." style row from `free -m` output
+  const memLine = lines.find(l => l.trim().startsWith('Mem:'));
   if (memLine) {
     const parts = memLine.trim().split(/\s+/);
+    // free -m: Mem: <total> <used> <free> <shared> <buff/cache> <available>
     if (parts.length >= 3) {
       const totalMB = parseFloat(parts[1]);
       const usedMB  = parseFloat(parts[2]);
-      if (totalMB > 0 && !isNaN(usedMB)) {
+      if (totalMB > 0 && !isNaN(usedMB) && usedMB <= totalMB) {
         return {
           totalBytes:   Math.round(totalMB * 1024 * 1024),
           usedBytes:    Math.round(usedMB  * 1024 * 1024),
@@ -218,6 +224,8 @@ function parseMemoryDetailed(pluginOutput, longPluginOutput) {
     }
   }
 
+  // Strategy 2: "Total: 16384 MB  Used: 8192 MB" style
+  const fullText = combined;
   const totalM = fullText.match(/total:\s*([\d.]+)\s*(mb|gb|kb)/i);
   const usedM  = fullText.match(/used:\s*([\d.]+)\s*(mb|gb|kb)/i);
   if (totalM && usedM) {

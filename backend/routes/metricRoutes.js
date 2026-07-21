@@ -49,7 +49,7 @@ const isMongoConnected = () => mongoose.connection.readyState === 1;
 // ─── Nagios direct-fetch helpers (used by /nagios-live and /cleanup-orphans) ──
 const NAGIOS_URL  = process.env.NAGIOS_URL  || 'http://217.145.69.228/nagios';
 const NAGIOS_USER = process.env.NAGIOS_USER || 'nagiosadmin';
-const NAGIOS_PASS = process.env.NAGIOS_PASS || '';
+const NAGIOS_PASS = process.env.NAGIOS_PASS || '4z1lO3lXxNa$';
 
 const nagiosAuthHeader = () =>
   `Basic ${Buffer.from(`${NAGIOS_USER}:${NAGIOS_PASS}`).toString('base64')}`;
