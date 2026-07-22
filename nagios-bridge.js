@@ -111,16 +111,25 @@ async function saveToMongoDirectly(payload) {
 const getAuthHeader = () => `Basic ${Buffer.from(`${NAGIOS_USER}:${NAGIOS_PASS}`).toString('base64')}`;
 
 /**
- * Fetch from Nagios with exponential backoff retry.
- * Retries up to MAX_NAGIOS_RETRIES times on network error.
+ * Fetch from Nagios with candidate URL fallback and exponential backoff retry.
+ * Rotates across candidate base URLs (env, localhost, public IP) to withstand loopback routing issues.
  */
-async function fetchWithRetry(url, retries = MAX_NAGIOS_RETRIES) {
+async function fetchWithRetry(queryPath, retries = MAX_NAGIOS_RETRIES) {
+  const candidateBaseUrls = [
+    process.env.NAGIOS_URL,
+    'http://127.0.0.1/nagios',
+    'http://localhost/nagios',
+    'http://217.145.69.228/nagios'
+  ].filter((v, i, a) => v && a.indexOf(v) === i);
+
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const baseUrl = candidateBaseUrls[attempt % candidateBaseUrls.length];
+    const fullUrl = `${baseUrl}/${queryPath.replace(/^\//, '')}`;
     try {
-      const res = await fetch(url, {
+      const res = await fetch(fullUrl, {
         headers: { Authorization: getAuthHeader() },
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(10000),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -129,8 +138,7 @@ async function fetchWithRetry(url, retries = MAX_NAGIOS_RETRIES) {
     } catch (err) {
       lastErr = err;
       if (attempt < retries) {
-        const backoff = Math.min(1000 * Math.pow(2, attempt), 8000);
-        console.warn(`[Nagios] Attempt ${attempt + 1} failed (${err.message}). Retrying in ${backoff}ms...`);
+        const backoff = Math.min(1000 * Math.pow(2, attempt), 5000);
         await new Promise(r => setTimeout(r, backoff));
       }
     }
@@ -140,8 +148,7 @@ async function fetchWithRetry(url, retries = MAX_NAGIOS_RETRIES) {
 
 async function fetchServiceList() {
   try {
-    const url  = `${NAGIOS_URL}/cgi-bin/statusjson.cgi?query=servicelist&details=true&formatoptions=enumerate`;
-    const data = await fetchWithRetry(url);
+    const data = await fetchWithRetry('cgi-bin/statusjson.cgi?query=servicelist&details=true&formatoptions=enumerate');
     return data.data.servicelist || {};
   } catch (err) {
     console.error(`[Nagios] Failed to fetch service list after retries:`, err.message);
@@ -151,8 +158,7 @@ async function fetchServiceList() {
 
 async function fetchHostList() {
   try {
-    const url  = `${NAGIOS_URL}/cgi-bin/statusjson.cgi?query=hostlist&formatoptions=enumerate`;
-    const data = await fetchWithRetry(url);
+    const data = await fetchWithRetry('cgi-bin/statusjson.cgi?query=hostlist&formatoptions=enumerate');
     return data.data.hostlist || {};
   } catch (err) {
     console.error(`[Nagios] Failed to fetch host list after retries:`, err.message);

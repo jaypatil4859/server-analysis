@@ -47,7 +47,6 @@ setInterval(() => {
 const isMongoConnected = () => mongoose.connection.readyState === 1;
 
 // ─── Nagios direct-fetch helpers (used by /nagios-live and /cleanup-orphans) ──
-const NAGIOS_URL  = process.env.NAGIOS_URL  || 'http://217.145.69.228/nagios';
 const NAGIOS_USER = process.env.NAGIOS_USER || 'nagiosadmin';
 const NAGIOS_PASS = process.env.NAGIOS_PASS || '4z1lO3lXxNa$';
 
@@ -55,15 +54,30 @@ const nagiosAuthHeader = () =>
   `Basic ${Buffer.from(`${NAGIOS_USER}:${NAGIOS_PASS}`).toString('base64')}`;
 
 async function fetchNagiosData(endpoint) {
-  const url = `${NAGIOS_URL}/cgi-bin/${endpoint}`;
-  const res = await fetch(url, {
-    headers: { Authorization: nagiosAuthHeader() },
-    signal: AbortSignal.timeout(12000),
-  });
-  if (!res.ok) throw new Error(`Nagios HTTP ${res.status}`);
-  const data = await res.json();
-  if (data.result?.type_code !== 0) throw new Error(`Nagios error: ${data.result?.message}`);
-  return data;
+  const candidateUrls = [
+    process.env.NAGIOS_URL,
+    'http://127.0.0.1/nagios',
+    'http://localhost/nagios',
+    'http://217.145.69.228/nagios'
+  ].filter((v, i, a) => v && a.indexOf(v) === i); // unique non-empty
+
+  let lastErr;
+  for (const baseUrl of candidateUrls) {
+    try {
+      const url = `${baseUrl}/cgi-bin/${endpoint}`;
+      const res = await fetch(url, {
+        headers: { Authorization: nagiosAuthHeader() },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (!res.ok) throw new Error(`Nagios HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.result?.type_code !== 0) throw new Error(`Nagios error: ${data.result?.message}`);
+      return data;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
 }
 
 // ─── Alert Logging ───────────────────────────────────────────────────────────
