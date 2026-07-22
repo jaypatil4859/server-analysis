@@ -102,9 +102,9 @@ jobs:
             sudo mkdir -p /var/www/server-analysis/frontend/monitoring
             sudo cp -r frontend/dist/* /var/www/server-analysis/frontend/monitoring/
 
-            echo "── Reloading PM2 processes ──"
-            sudo pm2 reload ecosystem.config.cjs --update-env || pm2 reload ecosystem.config.cjs --update-env
-            sudo pm2 save || pm2 save
+            echo "── Starting/Reloading PM2 processes ──"
+            sudo pm2 startOrReload ecosystem.config.cjs --update-env || pm2 startOrReload ecosystem.config.cjs --update-env
+            sudo pm2 save --force || pm2 save --force
 
             echo "── Reloading Nginx ──"
             sudo nginx -t && sudo systemctl reload nginx

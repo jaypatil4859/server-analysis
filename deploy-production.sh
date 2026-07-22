@@ -56,7 +56,7 @@ pm2 delete all 2>/dev/null || true
 echo ""
 echo "► Starting all processes..."
 cd "$APP_DIR"
-pm2 start ecosystem.config.cjs
+pm2 startOrReload ecosystem.config.cjs --update-env
 
 # ─── Step 6: Save PM2 process list so it survives reboot ──────────────────────
 echo ""

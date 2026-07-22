@@ -137,32 +137,12 @@ systemctl reload nginx
 ok "Nginx reloaded successfully"
 
 # ── 8. Start/Reload PM2 ────────────────────────────────────────────────────────
-step "Starting PM2 processes"
+step "Starting/Reloading PM2 processes"
 cd "$APP_DIR"
-if pm2 list | grep -q "server-analysis-backend"; then
-  pm2 reload server-analysis-backend
-  ok "Backend process reloaded"
-else
-  pm2 start backend/server.js --name "server-analysis-backend"
-  ok "Backend process started"
-fi
-
-if pm2 list | grep -q "server-analysis-nagios-bridge"; then
-  pm2 reload server-analysis-nagios-bridge
-  ok "Nagios bridge process reloaded"
-else
-  pm2 start nagios-bridge.js --name "server-analysis-nagios-bridge"
-  ok "Nagios bridge process started"
-fi
-
-if pm2 list | grep -q "server-analysis-ssh-collector"; then
-  pm2 reload server-analysis-ssh-collector
-  ok "SSH collector process reloaded"
-fi
-
+pm2 startOrReload ecosystem.config.cjs --update-env
 pm2 startup systemd -u root --hp /root | tail -1 | bash 2>/dev/null || true
-pm2 save
-ok "PM2 saved and set to start on boot"
+pm2 save --force
+ok "PM2 processes started/reloaded and set to start on boot"
 
 # ── 9. Health check ────────────────────────────────────────────────────────────
 step "Running health check"
