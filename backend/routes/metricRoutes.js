@@ -350,8 +350,23 @@ router.get('/nagios-live', async (req, res) => {
 
 // ─── NEW: GET /api/metrics/nagios-health — Bridge heartbeat + Nagios reachability
 router.get('/nagios-health', async (req, res) => {
-  const bridgeStaleSec = bridgeHeartbeat.lastPollAt
-    ? Math.floor((Date.now() - bridgeHeartbeat.lastPollAt) / 1000)
+  let effectiveLastPoll = bridgeHeartbeat.lastPollAt;
+
+  // Fallback to MongoDB latest document timestamp if in-memory heartbeat is missing or older
+  if (isMongoConnected()) {
+    try {
+      const latestMetric = await ServerMetric.findOne({}, { timestamp: 1 }).sort({ timestamp: -1 }).lean();
+      if (latestMetric?.timestamp) {
+        const dbTime = new Date(latestMetric.timestamp);
+        if (!effectiveLastPoll || dbTime > effectiveLastPoll) {
+          effectiveLastPoll = dbTime;
+        }
+      }
+    } catch { /* ignore mongo lookup error */ }
+  }
+
+  const bridgeStaleSec = effectiveLastPoll
+    ? Math.floor((Date.now() - effectiveLastPoll.getTime()) / 1000)
     : null;
 
   // Quick Nagios reachability check (hostlist count only, fast)
@@ -365,7 +380,7 @@ router.get('/nagios-health', async (req, res) => {
 
   res.json({
     bridge: {
-      lastPollAt:        bridgeHeartbeat.lastPollAt?.toISOString() || null,
+      lastPollAt:        effectiveLastPoll ? effectiveLastPoll.toISOString() : null,
       secondsSinceLastPoll: bridgeStaleSec,
       isStale:           bridgeStaleSec === null || bridgeStaleSec > 120, // >2 min = stale
       pollCount:         bridgeHeartbeat.pollCount,
@@ -374,7 +389,7 @@ router.get('/nagios-health', async (req, res) => {
     nagios: {
       reachable:  nagiosReachable,
       hostCount:  nagiosHostCount,
-      url:        NAGIOS_URL,
+      url:        process.env.NAGIOS_URL || 'http://217.145.69.228/nagios',
     },
     db: {
       connected: isMongoConnected(),
