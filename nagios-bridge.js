@@ -290,10 +290,78 @@ function parseTotalRamBytes(output) {
 }
 
 function parseDiskUsage(output) {
+  if (!output || typeof output !== 'string') return null;
+
+  // Format 1: DevOps performance data string e.g. "/dev/mapper/rl-root  146G  136G   11G  93% /"
+  const perfDataM = output.match(/(?:[\w/.-]+)\s+([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*%/i);
+  if (perfDataM) {
+    const parseUnit = (v, u) => {
+      const n = parseFloat(v);
+      const unit = u.toLowerCase();
+      if (unit.startsWith('t')) return Math.round(n * 1024 * 1024 * 1024 * 1024);
+      if (unit.startsWith('g')) return Math.round(n * 1024 * 1024 * 1024);
+      if (unit.startsWith('m')) return Math.round(n * 1024 * 1024);
+      if (unit.startsWith('k')) return Math.round(n * 1024);
+      return Math.round(n);
+    };
+    const totalBytes = parseUnit(perfDataM[1], perfDataM[2]);
+    const usedBytes  = parseUnit(perfDataM[3], perfDataM[4]);
+    const usagePercent = parseFloat(perfDataM[7]);
+    if (usagePercent >= 0 && usagePercent <= 100) {
+      return { totalBytes, usedBytes, usagePercent };
+    }
+  }
+
+  // Format 2: Nagios check_disk free space output e.g. "DISK CRITICAL - free space: / 11264 MB (7% inode=85%):"
+  const freeM = output.match(/free\s+space:\s*[\w/.-]+\s*[\d.]+\s*(?:MB|GB|KB|B)?\s*\(\s*([\d.]+)\s*%/i);
+  if (freeM) {
+    const freePct = parseFloat(freeM[1]);
+    if (freePct >= 0 && freePct <= 100) {
+      const usagePercent = parseFloat((100 - freePct).toFixed(1));
+      const totalM = output.match(/(?:total|size)[:=]?\s*([\d.]+)\s*(GB|GiB|MB|MiB|TB|TiB)/i);
+      let totalBytes = null;
+      if (totalM) {
+        const n = parseFloat(totalM[1]);
+        const u = totalM[2].toLowerCase();
+        if (u.startsWith('t')) totalBytes = Math.round(n * 1024 * 1024 * 1024 * 1024);
+        else if (u.startsWith('g')) totalBytes = Math.round(n * 1024 * 1024 * 1024);
+        else if (u.startsWith('m')) totalBytes = Math.round(n * 1024 * 1024);
+      }
+      return {
+        usagePercent,
+        totalBytes,
+        usedBytes: totalBytes ? Math.round((usagePercent / 100) * totalBytes) : null
+      };
+    }
+  }
+
+  // Format 3: Explicit usage percentage string e.g. "CRITICAL - Disk usage is 93%" or "93% used"
+  const usageExplicitM = output.match(/disk\s*usage\s*(?:is)?\s*([\d.]+)\s*%/i) ||
+                         output.match(/([\d.]+)\s*%\s*used/i);
+  if (usageExplicitM) {
+    const pct = parseFloat(usageExplicitM[1]);
+    if (pct >= 0 && pct <= 100) {
+      const totalM = output.match(/(?:total|size)[:=]?\s*([\d.]+)\s*(GB|GiB|MB|MiB|TB|TiB)/i);
+      let totalBytes = null;
+      if (totalM) {
+        const n = parseFloat(totalM[1]);
+        const u = totalM[2].toLowerCase();
+        if (u.startsWith('t')) totalBytes = Math.round(n * 1024 * 1024 * 1024 * 1024);
+        else if (u.startsWith('g')) totalBytes = Math.round(n * 1024 * 1024 * 1024);
+        else if (u.startsWith('m')) totalBytes = Math.round(n * 1024 * 1024);
+      }
+      return {
+        usagePercent: pct,
+        totalBytes,
+        usedBytes: totalBytes ? Math.round((pct / 100) * totalBytes) : null
+      };
+    }
+  }
+
+  // Format 4: Fallback generic percentage
   const pctM = output.match(/([\d.]+)\s*%/);
   if (!pctM) return null;
   const pct = parseFloat(pctM[1]);
-  // Sanity: disk % should be 0-100
   if (pct < 0 || pct > 100) return null;
 
   const totalM = output.match(/(?:total|size)[:=]?\s*([\d.]+)\s*(GB|GiB|MB|MiB|TB|TiB)/i) ||
@@ -307,7 +375,6 @@ function parseDiskUsage(output) {
     else if (u.startsWith('m')) totalBytes = Math.round(n * 1024 * 1024);
   }
 
-  // Always return at minimum the %, even when byte sizes are unknown
   if (!totalBytes) return { usagePercent: pct, totalBytes: null, usedBytes: null };
   return {
     totalBytes,
@@ -553,21 +620,16 @@ async function parseAndSendMetrics() {
     let parsedDisk = null;
 
     const diskSvc = findServiceByKeywords(hostServices, ['disk', 'space', 'storage', '/']);
-    if (diskSvc?.plugin_output) {
-      const d = parseDiskUsage(diskSvc.plugin_output);
-      if (d?.totalBytes) {
+    if (diskSvc) {
+      const combinedDiskText = [
+        diskSvc.plugin_output || '',
+        diskSvc.long_plugin_output || '',
+        diskSvc.perf_data || '',
+        diskSvc.performance_data || ''
+      ].join('\n');
+      const d = parseDiskUsage(combinedDiskText);
+      if (d) {
         parsedDisk = d;
-      } else if (d?.usagePercent !== undefined) {
-        const total = diskSvc.long_plugin_output ? parseTotalRamBytes(diskSvc.long_plugin_output) : null;
-        if (total) {
-          parsedDisk = {
-            totalBytes:   total,
-            usedBytes:    Math.round((d.usagePercent / 100) * total),
-            usagePercent: d.usagePercent
-          };
-        } else {
-          parsedDisk = { usagePercent: d.usagePercent };
-        }
       }
     }
 
