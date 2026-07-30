@@ -589,25 +589,104 @@ export default function App() {
               <div className="servers-grid">
                 {servers.map(server => {
                   // ── Stale detection with Nagios-live override ──────────────────────
-                  // Core fix: if Nagios says UP, NEVER mark as Stale — even if MongoDB
-                  // timestamp is old. MongoDB/bridge data lags; Nagios is the truth.
                   const nagiosStatus  = nagiosLiveMap[server.serverName]; // 'UP'|'DOWN'|undefined
                   const nagiosConfirmsUp = nagiosStatus === 'UP';
                   const nagiosConfirmsDown = nagiosStatus === 'DOWN' || nagiosStatus === 'UNREACHABLE';
-                  // Only mark stale if: Nagios doesn't say UP AND MongoDB data > 5 min old
                   const dbAge = Date.now() - new Date(server.timestamp);
                   const isStale = !nagiosConfirmsUp && dbAge > 5 * 60 * 1000;
                   const isDown  = nagiosConfirmsDown || server.status === 'down';
-                  // Overloaded: CPU or RAM or Disk >= 90%
-                  const diskPct = server.diskUsage?.usagePercent ?? 0;
-                  const isOverloaded = (server.cpuUsage ?? 0) >= 90 || (server.ramUsage?.usagePercent ?? 0) >= 90 || diskPct >= 90;
+
+                  // ── Metric fallback extraction from Nagios raw service outputs ──
+                  const ramInfo  = (() => {
+                    const ram = server.ramUsage || {};
+                    let totalBytes = ram.totalBytes;
+                    let usedBytes  = ram.usedBytes;
+                    let usagePercent = ram.usagePercent ?? 0;
+                    if ((!totalBytes || totalBytes <= 0) && Array.isArray(server.services)) {
+                      for (const svc of server.services) {
+                        const out = svc.output || '';
+                        const m1 = out.match(/Total\s*[:=]\s*([\d.]+)\s*([KMGT]i?B?)\s+Used\s*[:=]\s*([\d.]+)\s*([KMGT]i?B?)/i);
+                        if (m1) {
+                          const parseU = (v, u) => {
+                            const n = parseFloat(v);
+                            const unit = (u || '').toLowerCase();
+                            if (unit.startsWith('t')) return Math.round(n * 1024 * 1024 * 1024 * 1024);
+                            if (unit.startsWith('g')) return Math.round(n * 1024 * 1024 * 1024);
+                            if (unit.startsWith('m')) return Math.round(n * 1024 * 1024);
+                            if (unit.startsWith('k')) return Math.round(n * 1024);
+                            return Math.round(n);
+                          };
+                          totalBytes = parseU(m1[1], m1[2]);
+                          usedBytes  = parseU(m1[3], m1[4]);
+                          const pctM = out.match(/\(\s*([\d.]+)\s*%\s*used\s*\)/i) || out.match(/([\d.]+)\s*%/);
+                          usagePercent = pctM ? parseFloat(pctM[1]) : parseFloat(((usedBytes / totalBytes) * 100).toFixed(1));
+                          break;
+                        }
+                      }
+                    }
+                    return { totalBytes, usedBytes, usagePercent };
+                  })();
+
+                  const diskInfo = (() => {
+                    const disk = server.diskUsage || {};
+                    let totalBytes = disk.totalBytes;
+                    let usedBytes  = disk.usedBytes;
+                    let usagePercent = disk.usagePercent ?? 0;
+                    if ((!totalBytes || totalBytes <= 0) && Array.isArray(server.services)) {
+                      for (const svc of server.services) {
+                        const out = svc.output || '';
+                        // DevOps perfdata format: "146G 136G 11G 93%"
+                        const m1 = out.match(/([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*%/i);
+                        if (m1) {
+                          const parseU = (v, u) => {
+                            const n = parseFloat(v);
+                            const unit = (u || '').toLowerCase();
+                            if (unit.startsWith('t')) return Math.round(n * 1024 * 1024 * 1024 * 1024);
+                            if (unit.startsWith('g')) return Math.round(n * 1024 * 1024 * 1024);
+                            if (unit.startsWith('m')) return Math.round(n * 1024 * 1024);
+                            if (unit.startsWith('k')) return Math.round(n * 1024);
+                            return Math.round(n);
+                          };
+                          totalBytes   = parseU(m1[1], m1[2]);
+                          usedBytes    = parseU(m1[3], m1[4]);
+                          usagePercent = parseFloat(m1[7]);
+                          break;
+                        }
+                        // free space format: "free space: / 11264 MB (7%"
+                        const m2 = out.match(/free\s+space:\s*[\w/.-]*\s*([\d.]+)\s*([KMGT]i?B?)\s*\(\s*([\d.]+)\s*%/i);
+                        if (m2) {
+                          const freeVal = parseFloat(m2[1]);
+                          const freeUnit = m2[2].toLowerCase();
+                          const freePct = parseFloat(m2[3]);
+                          if (freePct > 0 && freePct < 100 && freeVal > 0) {
+                            const parseU = (v, u) => {
+                              const n = parseFloat(v);
+                              if (u.startsWith('t')) return n * 1024 * 1024 * 1024 * 1024;
+                              if (u.startsWith('g')) return n * 1024 * 1024 * 1024;
+                              if (u.startsWith('m')) return n * 1024 * 1024;
+                              if (u.startsWith('k')) return n * 1024;
+                              return n;
+                            };
+                            const freeBytes = parseU(freeVal, freeUnit);
+                            totalBytes   = Math.round(freeBytes / (freePct / 100));
+                            usedBytes    = Math.max(0, totalBytes - Math.round(freeBytes));
+                            usagePercent = parseFloat((100 - freePct).toFixed(1));
+                            break;
+                          }
+                        }
+                      }
+                    }
+                    return { totalBytes, usedBytes, usagePercent };
+                  })();
+
+                  const diskPct = diskInfo.usagePercent ?? 0;
+                  const isOverloaded = (server.cpuUsage ?? 0) >= 90 || (ramInfo.usagePercent ?? 0) >= 90 || diskPct >= 90;
                   const secAgo  = Math.max(0, Math.floor(dbAge / 1000));
                   const timeAgo = secAgo < 60 ? `${secAgo}s ago` : `${Math.floor(secAgo/60)}m ago`;
 
                   const cpuColor  = (server.cpuUsage ?? 0) >= 90 ? 'danger' : 'cpu';
-                  const ramColor  = (server.ramUsage?.usagePercent ?? 0) >= 90 ? 'danger' : 'ram';
+                  const ramColor  = (ramInfo.usagePercent ?? 0) >= 90 ? 'danger' : 'ram';
                   const diskColor = diskPct >= 90 ? 'danger' : 'disk';
-                  // Load saturation: color based on load/cores ratio
                   const loadSatColor = loadSaturationColor(server.loadAverage?.oneMin ?? 0, server.cpuCores);
 
                   return (
@@ -667,45 +746,43 @@ export default function App() {
                             <span className="metric-label">
                               <HardDrive size={12} /> Memory
                             </span>
-                            <span className={`metric-val ${ramColor}`}>{server.ramUsage?.usagePercent ?? 0}%</span>
+                            <span className={`metric-val ${ramColor}`}>{ramInfo.usagePercent}%</span>
                           </div>
                           <div className="progress-track">
-                            <div className={`progress-bar ${ramColor}`} style={{ width:`${Math.min(100, server.ramUsage?.usagePercent ?? 0)}%` }} />
+                            <div className={`progress-bar ${ramColor}`} style={{ width:`${Math.min(100, ramInfo.usagePercent)}%` }} />
                           </div>
                           <div className="metric-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                            <span>{fmtBytes(server.ramUsage?.usedBytes)} used of {fmtBytes(server.ramUsage?.totalBytes)}</span>
-                            {server.ramUsage?.totalBytes > 0 && (
-                              <span style={{ fontWeight: 600, color: (server.ramUsage?.usagePercent >= 90 ? 'var(--danger)' : 'var(--success)') }}>
-                                {fmtBytes(Math.max(0, server.ramUsage.totalBytes - (server.ramUsage.usedBytes || 0)))} free
+                            <span>{fmtBytes(ramInfo.usedBytes)} used of {fmtBytes(ramInfo.totalBytes)}</span>
+                            {ramInfo.totalBytes > 0 && (
+                              <span style={{ fontWeight: 600, color: (ramInfo.usagePercent >= 90 ? 'var(--danger)' : 'var(--success)') }}>
+                                {fmtBytes(Math.max(0, ramInfo.totalBytes - (ramInfo.usedBytes || 0)))} free
                               </span>
                             )}
                           </div>
                         </div>
 
-                        {/* Disk — show whenever usagePercent is available, even without byte data */}
-                        {(server.diskUsage?.usagePercent != null) && (
-                          <div className="metric-row">
-                            <div className="metric-label-row">
-                              <span className="metric-label">
-                                <Database size={12} /> Storage
-                              </span>
-                              <span className={`metric-val ${diskColor}`}>{server.diskUsage.usagePercent}%</span>
-                            </div>
-                            <div className="progress-track">
-                              <div className={`progress-bar ${diskColor}`} style={{ width:`${Math.min(100, server.diskUsage.usagePercent)}%` }} />
-                            </div>
-                            {server.diskUsage.totalBytes > 0 ? (
-                              <div className="metric-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                                <span>{fmtBytes(server.diskUsage.usedBytes)} used of {fmtBytes(server.diskUsage.totalBytes)}</span>
-                                <span style={{ fontWeight: 600, color: (server.diskUsage.usagePercent >= 90 ? 'var(--danger)' : 'var(--success)') }}>
-                                  {fmtBytes(Math.max(0, server.diskUsage.totalBytes - (server.diskUsage.usedBytes || 0)))} free
-                                </span>
-                              </div>
-                            ) : (
-                              <div className="metric-sub">{server.diskUsage.usagePercent}% consumed</div>
-                            )}
+                        {/* Disk / Storage */}
+                        <div className="metric-row">
+                          <div className="metric-label-row">
+                            <span className="metric-label">
+                              <Database size={12} /> Storage
+                            </span>
+                            <span className={`metric-val ${diskColor}`}>{diskInfo.usagePercent}%</span>
                           </div>
-                        )}
+                          <div className="progress-track">
+                            <div className={`progress-bar ${diskColor}`} style={{ width:`${Math.min(100, diskInfo.usagePercent)}%` }} />
+                          </div>
+                          {diskInfo.totalBytes > 0 ? (
+                            <div className="metric-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                              <span>{fmtBytes(diskInfo.usedBytes)} used of {fmtBytes(diskInfo.totalBytes)}</span>
+                              <span style={{ fontWeight: 600, color: (diskInfo.usagePercent >= 90 ? 'var(--danger)' : 'var(--success)') }}>
+                                {fmtBytes(Math.max(0, diskInfo.totalBytes - (diskInfo.usedBytes || 0)))} free
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="metric-sub">{diskInfo.usagePercent}% consumed</div>
+                          )}
+                        </div>
 
                         {/* Load average — with saturation color based on core count */}
                         <div className="metric-row">
