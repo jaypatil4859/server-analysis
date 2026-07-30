@@ -312,12 +312,13 @@ function parseTotalRamBytes(output) {
 function parseDiskUsage(output) {
   if (!output || typeof output !== 'string') return null;
 
-  // Format 1: DevOps performance data string e.g. "/dev/mapper/rl-root  146G  136G   11G  93% /"
-  const perfDataM = output.match(/(?:[\w/.-]+)\s+([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*%/i);
+  // Format 1: DevOps performance output e.g. "CRITICAL - /dev/mapper/rl-root  146G  136G   11G  93% /"
+  // Matches: <TotalSize> <UsedSize> <FreeSize> <UsagePercent>%
+  const perfDataM = output.match(/([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*([KMGT]i?B?)\s+([\d.]+)\s*%/i);
   if (perfDataM) {
     const parseUnit = (v, u) => {
       const n = parseFloat(v);
-      const unit = u.toLowerCase();
+      const unit = (u || '').toLowerCase();
       if (unit.startsWith('t')) return Math.round(n * 1024 * 1024 * 1024 * 1024);
       if (unit.startsWith('g')) return Math.round(n * 1024 * 1024 * 1024);
       if (unit.startsWith('m')) return Math.round(n * 1024 * 1024);
@@ -327,35 +328,76 @@ function parseDiskUsage(output) {
     const totalBytes = parseUnit(perfDataM[1], perfDataM[2]);
     const usedBytes  = parseUnit(perfDataM[3], perfDataM[4]);
     const usagePercent = parseFloat(perfDataM[7]);
-    if (usagePercent >= 0 && usagePercent <= 100) {
+    if (totalBytes > 0 && usagePercent >= 0 && usagePercent <= 100) {
       return { totalBytes, usedBytes, usagePercent };
     }
   }
 
   // Format 2: Nagios check_disk free space output e.g. "DISK CRITICAL - free space: / 11264 MB (7% inode=85%):"
-  const freeM = output.match(/free\s+space:\s*[\w/.-]+\s*[\d.]+\s*(?:MB|GB|KB|B)?\s*\(\s*([\d.]+)\s*%/i);
+  const freeM = output.match(/free\s+space:\s*[\w/.-]*\s*([\d.]+)\s*([KMGT]i?B?)\s*\(\s*([\d.]+)\s*%/i);
   if (freeM) {
-    const freePct = parseFloat(freeM[1]);
-    if (freePct >= 0 && freePct <= 100) {
-      const usagePercent = parseFloat((100 - freePct).toFixed(1));
-      const totalM = output.match(/(?:total|size)[:=]?\s*([\d.]+)\s*(GB|GiB|MB|MiB|TB|TiB)/i);
-      let totalBytes = null;
-      if (totalM) {
-        const n = parseFloat(totalM[1]);
-        const u = totalM[2].toLowerCase();
-        if (u.startsWith('t')) totalBytes = Math.round(n * 1024 * 1024 * 1024 * 1024);
-        else if (u.startsWith('g')) totalBytes = Math.round(n * 1024 * 1024 * 1024);
-        else if (u.startsWith('m')) totalBytes = Math.round(n * 1024 * 1024);
-      }
-      return {
-        usagePercent,
-        totalBytes,
-        usedBytes: totalBytes ? Math.round((usagePercent / 100) * totalBytes) : null
+    const freeVal = parseFloat(freeM[1]);
+    const freeUnit = freeM[2].toLowerCase();
+    const freePct = parseFloat(freeM[3]);
+    if (freePct > 0 && freePct < 100 && freeVal > 0) {
+      const parseUnit = (v, u) => {
+        const n = parseFloat(v);
+        if (u.startsWith('t')) return n * 1024 * 1024 * 1024 * 1024;
+        if (u.startsWith('g')) return n * 1024 * 1024 * 1024;
+        if (u.startsWith('m')) return n * 1024 * 1024;
+        if (u.startsWith('k')) return n * 1024;
+        return n;
       };
+      const freeBytes = parseUnit(freeVal, freeUnit);
+      const totalBytes = Math.round(freeBytes / (freePct / 100));
+      const usedBytes  = Math.max(0, totalBytes - Math.round(freeBytes));
+      const usagePercent = parseFloat((100 - freePct).toFixed(1));
+      return { totalBytes, usedBytes, usagePercent };
     }
   }
 
-  // Format 3: Explicit usage percentage string e.g. "CRITICAL - Disk usage is 93%" or "93% used"
+  // Format 3: Perfdata format e.g. "/=136000MB;130000;140000;0;146000"
+  const perfDataKeyValueM = output.match(/[\w/.-]+=\s*([\d.]+)\s*([KMGT]i?B?);[^;]*;[^;]*;[^;]*;\s*([\d.]+)/i);
+  if (perfDataKeyValueM) {
+    const parseUnit = (v, u) => {
+      const n = parseFloat(v);
+      const unit = (u || '').toLowerCase();
+      if (unit.startsWith('t')) return Math.round(n * 1024 * 1024 * 1024 * 1024);
+      if (unit.startsWith('g')) return Math.round(n * 1024 * 1024 * 1024);
+      if (unit.startsWith('m')) return Math.round(n * 1024 * 1024);
+      if (unit.startsWith('k')) return Math.round(n * 1024);
+      return Math.round(n);
+    };
+    const usedBytes  = parseUnit(perfDataKeyValueM[1], perfDataKeyValueM[2]);
+    const maxVal     = parseFloat(perfDataKeyValueM[3]);
+    const totalBytes = parseUnit(maxVal, perfDataKeyValueM[2]);
+    if (totalBytes > 0) {
+      const usagePercent = parseFloat(((usedBytes / totalBytes) * 100).toFixed(1));
+      return { totalBytes, usedBytes, usagePercent };
+    }
+  }
+
+  // Format 4: X GB / Y GB or X GB of Y GB format
+  const xOfYM = output.match(/([\d.]+)\s*([KMGT]i?B?)\s*(?:\/|of|\bused of\b)\s*([\d.]+)\s*([KMGT]i?B?)/i);
+  if (xOfYM) {
+    const parseUnit = (v, u) => {
+      const n = parseFloat(v);
+      const unit = (u || '').toLowerCase();
+      if (unit.startsWith('t')) return Math.round(n * 1024 * 1024 * 1024 * 1024);
+      if (unit.startsWith('g')) return Math.round(n * 1024 * 1024 * 1024);
+      if (unit.startsWith('m')) return Math.round(n * 1024 * 1024);
+      if (unit.startsWith('k')) return Math.round(n * 1024);
+      return Math.round(n);
+    };
+    const usedBytes  = parseUnit(xOfYM[1], xOfYM[2]);
+    const totalBytes = parseUnit(xOfYM[3], xOfYM[4]);
+    if (totalBytes > 0) {
+      const usagePercent = parseFloat(((usedBytes / totalBytes) * 100).toFixed(1));
+      return { totalBytes, usedBytes, usagePercent };
+    }
+  }
+
+  // Format 5: Explicit usage percentage string e.g. "CRITICAL - Disk usage is 93%" or "93% used"
   const usageExplicitM = output.match(/disk\s*usage\s*(?:is)?\s*([\d.]+)\s*%/i) ||
                          output.match(/([\d.]+)\s*%\s*used/i);
   if (usageExplicitM) {
@@ -378,7 +420,7 @@ function parseDiskUsage(output) {
     }
   }
 
-  // Format 4: Fallback generic percentage
+  // Format 6: Fallback generic percentage
   const pctM = output.match(/([\d.]+)\s*%/);
   if (!pctM) return null;
   const pct = parseFloat(pctM[1]);
