@@ -248,8 +248,28 @@ function parseMemoryDetailed(pluginOutput, longPluginOutput) {
     }
   }
 
-  // Strategy 2: "Total: 16384 MB  Used: 8192 MB" style
+  // Strategy 2: "Total: 16384 MB  Used: 8192 MB" or "Total=15Gi Used=12Gi Free=1.3Gi" style
   const fullText = combined;
+
+  // Nagios specific format: "Total=15Gi Used=12Gi Free=1.3Gi" or "Total=16GB Used=8GB"
+  const nagiosGiM = fullText.match(/Total\s*[:=]\s*([\d.]+)\s*([KMGT]i?B?)\s+Used\s*[:=]\s*([\d.]+)\s*([KMGT]i?B?)/i);
+  if (nagiosGiM) {
+    const parseUnit = (v, u) => {
+      const n = parseFloat(v);
+      const unit = u.toLowerCase();
+      if (unit.startsWith('t')) return Math.round(n * 1024 * 1024 * 1024 * 1024);
+      if (unit.startsWith('g')) return Math.round(n * 1024 * 1024 * 1024);
+      if (unit.startsWith('m')) return Math.round(n * 1024 * 1024);
+      if (unit.startsWith('k')) return Math.round(n * 1024);
+      return Math.round(n);
+    };
+    const totalBytes = parseUnit(nagiosGiM[1], nagiosGiM[2]);
+    const usedBytes  = parseUnit(nagiosGiM[3], nagiosGiM[4]);
+    const pctM = fullText.match(/\(\s*([\d.]+)\s*%\s*used\s*\)/i) || fullText.match(/([\d.]+)\s*%/);
+    const usagePercent = pctM ? parseFloat(pctM[1]) : parseFloat(((usedBytes / totalBytes) * 100).toFixed(1));
+    return { totalBytes, usedBytes, usagePercent };
+  }
+
   const totalM = fullText.match(/total:\s*([\d.]+)\s*(mb|gb|kb)/i);
   const usedM  = fullText.match(/used:\s*([\d.]+)\s*(mb|gb|kb)/i);
   if (totalM && usedM) {

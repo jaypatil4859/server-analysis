@@ -672,8 +672,13 @@ export default function App() {
                           <div className="progress-track">
                             <div className={`progress-bar ${ramColor}`} style={{ width:`${Math.min(100, server.ramUsage?.usagePercent ?? 0)}%` }} />
                           </div>
-                          <div className="metric-sub">
-                            {fmtBytes(server.ramUsage?.usedBytes)} / {fmtBytes(server.ramUsage?.totalBytes)}
+                          <div className="metric-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                            <span>{fmtBytes(server.ramUsage?.usedBytes)} used of {fmtBytes(server.ramUsage?.totalBytes)}</span>
+                            {server.ramUsage?.totalBytes > 0 && (
+                              <span style={{ fontWeight: 600, color: (server.ramUsage?.usagePercent >= 90 ? 'var(--danger)' : 'var(--success)') }}>
+                                {fmtBytes(Math.max(0, server.ramUsage.totalBytes - (server.ramUsage.usedBytes || 0)))} free
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -689,10 +694,15 @@ export default function App() {
                             <div className="progress-track">
                               <div className={`progress-bar ${diskColor}`} style={{ width:`${Math.min(100, server.diskUsage.usagePercent)}%` }} />
                             </div>
-                            {(server.diskUsage.totalBytes > 0) && (
-                              <div className="metric-sub">
-                                {fmtBytes(server.diskUsage.usedBytes)} / {fmtBytes(server.diskUsage.totalBytes)}
+                            {server.diskUsage.totalBytes > 0 ? (
+                              <div className="metric-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                                <span>{fmtBytes(server.diskUsage.usedBytes)} used of {fmtBytes(server.diskUsage.totalBytes)}</span>
+                                <span style={{ fontWeight: 600, color: (server.diskUsage.usagePercent >= 90 ? 'var(--danger)' : 'var(--success)') }}>
+                                  {fmtBytes(Math.max(0, server.diskUsage.totalBytes - (server.diskUsage.usedBytes || 0)))} free
+                                </span>
                               </div>
+                            ) : (
+                              <div className="metric-sub">{server.diskUsage.usagePercent}% consumed</div>
                             )}
                           </div>
                         )}
