@@ -54,11 +54,12 @@ const nagiosAuthHeader = () =>
   `Basic ${Buffer.from(`${NAGIOS_USER}:${NAGIOS_PASS}`).toString('base64')}`;
 
 async function fetchNagiosData(endpoint) {
+  const envNagiosUrl = process.env.NAGIOS_URL || 'http://217.145.69.228/nagios';
   const candidateUrls = [
-    process.env.NAGIOS_URL,
+    envNagiosUrl,
+    'http://217.145.69.228/nagios',
     'http://127.0.0.1/nagios',
-    'http://localhost/nagios',
-    'http://217.145.69.228/nagios'
+    'http://localhost/nagios'
   ].filter((v, i, a) => v && a.indexOf(v) === i); // unique non-empty
 
   let lastErr;

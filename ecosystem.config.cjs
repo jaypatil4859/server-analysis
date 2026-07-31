@@ -14,6 +14,10 @@ module.exports = {
         PORT:        3971,
         MONGODB_URI: 'mongodb://admin:dMY8Rp0(K9S7Hy@217.145.69.228:27017/server_analysis?authSource=admin',
         SEED_DUMMY_HISTORY: 'false',
+        ENABLE_EMBEDDED_NAGIOS_BRIDGE: 'false',
+        NAGIOS_URL:  'http://217.145.69.228/nagios',
+        NAGIOS_USER: 'nagiosadmin',
+        NAGIOS_PASS: '4z1lO3lXxNa$',
       }
     },
 

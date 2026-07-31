@@ -115,11 +115,12 @@ const getAuthHeader = () => `Basic ${Buffer.from(`${NAGIOS_USER}:${NAGIOS_PASS}`
  * Rotates across candidate base URLs (env, localhost, public IP) to withstand loopback routing issues.
  */
 async function fetchWithRetry(queryPath, retries = MAX_NAGIOS_RETRIES) {
+  const envNagiosUrl = process.env.NAGIOS_URL || 'http://217.145.69.228/nagios';
   const candidateBaseUrls = [
-    process.env.NAGIOS_URL,
+    envNagiosUrl,
+    'http://217.145.69.228/nagios',
     'http://127.0.0.1/nagios',
-    'http://localhost/nagios',
-    'http://217.145.69.228/nagios'
+    'http://localhost/nagios'
   ].filter((v, i, a) => v && a.indexOf(v) === i);
 
   let lastErr;
@@ -138,8 +139,14 @@ async function fetchWithRetry(queryPath, retries = MAX_NAGIOS_RETRIES) {
     } catch (err) {
       lastErr = err;
       if (attempt < retries) {
-        const backoff = Math.min(1000 * Math.pow(2, attempt), 5000);
-        await new Promise(r => setTimeout(r, backoff));
+        const isConnErr = err.message?.includes('ECONNREFUSED') ||
+                          err.message?.includes('fetch failed') ||
+                          err.cause?.code?.includes('ECONNREFUSED') ||
+                          err.cause?.code?.includes('ENOTFOUND');
+        if (!isConnErr) {
+          const backoff = Math.min(1000 * Math.pow(2, attempt), 5000);
+          await new Promise(r => setTimeout(r, backoff));
+        }
       }
     }
   }
